@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Computer Vision AI Demo — Face Recognition + Emotion Detection." />
+  <title>Computer Vision models</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+  <!-- Background glow effects -->
+  <div class="bg-glow bg-glow--1"></div>
+  <div class="bg-glow bg-glow--2"></div>
+
+  <!-- Header -->
+  <header>
+    <div class="logo">
+      <span class="logo-text">Computer Vision models</span>
+    </div>
+    <p class="tagline">Real-Time Facial Recognition &amp; Emotion Detection</p>
+  </header>
+
+  <!-- Main Content -->
+  <main>
+
+    <!-- ── Card 1 : Face Recognition ─────────────────────────────────────── -->
+    <section class="card">
+      <div class="card-header">
+        <div class="status-indicator" id="live-indicator">ACTIVE</div>
+        <h2>Identity Engine</h2>
+      </div>
+
+      <div class="card-body">
+        <div class="split-layout">
+
+          <!-- Form Side -->
+          <div class="form-side">
+            <div class="form-group">
+              <label for="name">Identity Name</label>
+              <input type="text" id="name" placeholder="E.g., John Doe" autocomplete="off"/>
+            </div>
+
+            <div class="form-group">
+              <label>Training Samples</label>
+              <div class="upload-zone" id="upload-zone" onclick="document.getElementById('fileInput').click()">
+                <div class="icon">⊞</div>
+                <p>Drag photos here or click to browse</p>
+                <input type="file" id="fileInput" accept="image/*" multiple hidden onchange="handleUpload(this.files)"/>
+                <div class="preview-container" id="preview"></div>
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 10px;">
+              <button class="btn btn--primary" id="train-btn" onclick="trainModel()" style="flex: 1;">
+                Train My Face
+              </button>
+              <button class="btn btn--danger" id="cancel-train-btn" onclick="cancelTraining()" style="flex: 1;">
+                Cancel
+              </button>
+            </div>
+            <div class="status-box" id="global-status">Ready</div>
+          </div>
+
+          <!-- Video Side -->
+          <div class="view-side">
+            <div class="video-container" id="video-container">
+              <div class="placeholder" id="video-placeholder">
+                <div class="icon">⌬</div>
+                <p>Webcam Offline</p>
+              </div>
+              <img id="video-feed" src="" alt="Live feed" />
+            </div>
+
+            <div class="controls">
+              <button class="btn btn--success" id="start-btn">Start Recognition</button>
+              <button class="btn btn--danger" id="stop-btn" style="display: none;">Stop</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ── Card 2 : Emotion Detection ──────────────────────────────────────── -->
+    <section class="card card--emotion">
+      <div class="card-header">
+        <div class="status-indicator" id="emotion-indicator">READY</div>
+        <h2>Emotion Engine</h2>
+      </div>
+
+      <div class="card-body">
+        <div class="emotion-layout">
+
+          <!-- Info Side -->
+          <div class="emotion-info-side">
+            <p class="emotion-desc">
+              Real-time facial emotion analysis powered by a CNN trained on the FER dataset.
+              Point the webcam at a face and the model will classify the dominant emotion
+              every frame.
+            </p>
+
+            <div class="emotion-labels-grid">
+              <span class="emotion-chip angry">Angry</span>
+              <span class="emotion-chip disgust">Disgust</span>
+              <span class="emotion-chip fear">Fear</span>
+              <span class="emotion-chip happy">Happy</span>
+              <span class="emotion-chip sad">Sad</span>
+            </div>
+
+            <div class="emotion-controls-wrap">
+              <button class="btn btn--emotion" id="emotion-start-btn">
+                Start Emotion Detection
+              </button>
+              <button class="btn btn--danger" id="emotion-stop-btn" style="display: none;">
+                Stop
+              </button>
+            </div>
+
+            <div class="status-box" id="emotion-status">Ready</div>
+          </div>
+
+          <!-- Feed Side -->
+          <div class="view-side">
+            <div class="video-container emotion-feed-container" id="emotion-video-container">
+              <div class="placeholder" id="emotion-placeholder">
+                <div class="icon">◈</div>
+                <p>Emotion Cam Offline</p>
+              </div>
+              <img id="emotion-feed" src="" alt="Emotion feed" />
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Card 3 : Object Detection ──────────────────────────────────────── -->
+    <section class="card card--object">
+      <div class="card-header">
+        <div class="status-indicator" id="object-indicator">READY</div>
+        <h2>Object Detection</h2>
+      </div>
+
+      <div class="card-body">
+        <div class="object-layout">
+
+          <!-- Info Side -->
+          <div class="object-info-side">
+            <p class="object-desc">
+              Real-time object detection powered by YOLOv8. Identifies bottles,
+              chairs, watches, and pens in your environment with bounding boxes
+              and confidence scores every frame.
+            </p>
+
+            <div class="object-labels-grid">
+              <span class="object-chip bottle">Bottle</span>
+              <span class="object-chip chair">Chair</span>
+              <span class="object-chip clock">Watch (clock)</span>
+              <span class="object-chip phone">Mobile Phone</span>
+            </div>
+
+            <div class="object-controls-wrap">
+              <button class="btn btn--object" id="object-start-btn">
+                Start Object Detection
+              </button>
+              <button class="btn btn--danger" id="object-stop-btn" style="display: none;">
+                Stop
+              </button>
+            </div>
+
+            <div class="status-box" id="object-status">Ready</div>
+          </div>
+
+          <!-- Feed Side -->
+          <div class="view-side">
+            <div class="video-container object-feed-container" id="object-video-container">
+              <div class="placeholder" id="object-placeholder">
+                <div class="icon">◉</div>
+                <p>Object Cam Offline</p>
+              </div>
+              <img id="object-feed" src="" alt="Object detection feed" />
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Card 4 : Vehicle Detection ──────────────────────────────────────── -->
+    <section class="card card--vehicle">
+      <div class="card-header">
+        <div class="status-indicator" id="vehicle-indicator">READY</div>
+        <h2>Vehicle Detection</h2>
+      </div>
+
+      <div class="card-body">
+        <div class="container" style="display: flex; gap: 20px; flex-wrap: wrap;">
+          <div class="video-section" style="flex: 1; min-width: 300px;">
+            <p class="vehicle-desc" style="margin-bottom: 15px;">
+              Upload a video file (Max 20MB) to run vehicle detection.
+            </p>
+            <form id="uploadForm" enctype="multipart/form-data" style="margin-bottom: 20px; background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px;">
+              <div style="margin-bottom: 10px;">
+                <input type="file" id="videoInput" name="video" accept="video/*" style="color: #fff;">
+              </div>
+              <button type="submit" class="btn btn--vehicle" id="vehicle-upload-btn" disabled style="background: #eab308; color: #000; display: inline-flex; align-items: center; gap: 8px; font-weight: bold; opacity: 0.5; cursor: not-allowed;">
+                <span id="upload-btn-text">Detect Vehicles</span>
+                <div id="upload-spinner" style="display: none; width: 16px; height: 16px; border: 2px solid #000; border-top: 2px solid transparent; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+              </button>
+            </form>
+
+            <div class="status-box" id="vehicle-status" style="margin-bottom: 15px;">Ready</div>
+
+            <div class="video-container" style="background: #000; aspect-ratio: 16/9; display: flex; align-items: center; justify-content: center; border-radius: 8px; overflow: hidden; position: relative;">
+              <div class="placeholder" id="vehicle-placeholder" style="text-align: center; color: #888;">
+                <div class="icon" style="font-size: 32px; margin-bottom: 8px;">🚘</div>
+                <p>No Video Uploaded</p>
+              </div>
+              <img id="videoFeed" style="display: none; max-width: 100%; max-height: 100%; object-fit: contain; width: 100%;" alt="Processed Video Feed" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    <p>Powered by OpenCV, TensorFlow &amp; Advanced AI Encodings</p>
+  </footer>
+
+  <script src="/static/script.js?v=4"></script>
+</body>
+</html>

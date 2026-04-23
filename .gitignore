@@ -1,0 +1,25 @@
+# ── Temporary video uploads (auto-deleted after processing) ──
+temp_uploads/
+uploads/
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+
+# ── Virtual environment ──
+venv/
+.venv/
+env/
+
+# ── Environment secrets ──
+.env
+
+# ── ML model weights ──
+*.pt
+*.h5
+
+# ── OS ──
+.DS_Store
+Thumbs.db
