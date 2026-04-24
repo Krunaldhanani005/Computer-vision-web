@@ -45,6 +45,14 @@
             </div>
 
             <div class="form-group">
+              <label for="person-type">Person Type</label>
+              <select id="person-type" style="width: 100%; padding: 12px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.2); color: white; border-radius: 8px; outline: none; margin-top: 8px;">
+                <option value="known" style="color: black;">Known</option>
+                <option value="blacklist" style="color: black;">Blacklist</option>
+              </select>
+            </div>
+
+            <div class="form-group">
               <label>Training Samples</label>
               <div class="upload-zone" id="upload-zone" onclick="document.getElementById('fileInput').click()">
                 <div class="icon">⊞</div>
@@ -54,15 +62,12 @@
               </div>
             </div>
 
-            <div style="display: flex; gap: 10px;">
-              <button class="btn btn--primary" id="train-btn" onclick="trainModel()" style="flex: 1;">
-                Train My Face
-              </button>
-              <button class="btn btn--danger" id="cancel-train-btn" onclick="cancelTraining()" style="flex: 1;">
-                Cancel
+            <div style="margin-top: 15px;">
+              <button class="btn btn--primary" id="train-btn" onclick="trainModel()" style="width: 100%;">
+                Train Face
               </button>
             </div>
-            <div class="status-box" id="global-status">Ready</div>
+            <div class="status-box" id="global-status" style="margin-top: 15px;">Ready</div>
           </div>
 
           <!-- Video Side -->
@@ -75,9 +80,9 @@
               <img id="video-feed" src="" alt="Live feed" />
             </div>
 
-            <div class="controls">
-              <button class="btn btn--success" id="start-btn">Start Recognition</button>
-              <button class="btn btn--danger" id="stop-btn" style="display: none;">Stop</button>
+            <div class="controls" style="display: flex; gap: 10px; margin-top: 15px;">
+              <button class="btn btn--success" id="start-btn" style="flex: 1;">Start Recognition</button>
+              <button class="btn btn--danger" id="stop-btn" style="display: none; flex: 1;">Stop Recognition</button>
             </div>
           </div>
 
@@ -230,10 +235,97 @@
 
   </main>
 
+  <!-- ── Card 5 : Restricted Area Detection ────────────────────────────────── -->
+  <section class="card">
+    <div class="card-header">
+      <div class="status-indicator" id="restricted-indicator">READY</div>
+      <h2>Restricted Area Security</h2>
+    </div>
+
+    <div class="card-body">
+
+      <!-- Top Row: Registration + Monitor -->
+      <div class="split-layout" style="margin-bottom: 25px;">
+
+        <!-- LEFT: Register Known Person -->
+        <div class="form-side">
+          <h3 style="margin-bottom: 12px; color: var(--success);">Register Known Person</h3>
+          <p style="color: #aaa; font-size: 0.88rem; margin-bottom: 14px; line-height: 1.5;">
+            Upload at least 3 clear, front-facing photos. Encodings are stored — images are discarded immediately.
+          </p>
+
+          <div class="form-group">
+            <label for="ra-name">Full Name</label>
+            <input type="text" id="ra-name" placeholder="E.g., Alice Johnson" autocomplete="off"/>
+          </div>
+
+          <div class="form-group" style="margin-top: 12px;">
+            <label>Photos (3+ recommended)</label>
+            <div class="upload-zone" id="ra-upload-zone" onclick="document.getElementById('ra-file-input').click()" style="min-height: 80px;">
+              <div class="icon" style="font-size: 1.6rem;">&#x229E;</div>
+              <p style="font-size: 0.85rem;">Click to select images</p>
+              <input type="file" id="ra-file-input" accept="image/*" multiple hidden onchange="raHandleUpload(this.files)"/>
+              <div class="preview-container" id="ra-preview"></div>
+            </div>
+          </div>
+
+          <button class="btn btn--success" id="ra-register-btn" onclick="raRegisterPerson()" style="width: 100%; margin-top: 14px;">
+            Register Person
+          </button>
+          <div class="status-box" id="ra-register-status" style="margin-top: 12px;">Ready</div>
+        </div>
+
+        <!-- RIGHT: Camera Monitor -->
+        <div class="view-side">
+          <div class="video-container" id="restricted-video-container">
+            <div class="placeholder" id="restricted-placeholder">
+              <div class="icon">&#x26E8;</div>
+              <p>Security Cam Offline</p>
+            </div>
+            <img id="restricted-feed" src="" alt="Restricted Area feed" style="display:none;" />
+          </div>
+
+          <!-- Start / Stop toggle -->
+          <div style="display: flex; gap: 10px; margin-top: 14px;">
+            <button class="btn btn--primary" id="restricted-start-btn" style="flex: 1;">&#x25B6; Start Monitoring</button>
+            <button class="btn btn--danger"  id="restricted-stop-btn"  style="flex: 1; display: none;">&#x25FC; Stop Monitoring</button>
+          </div>
+          <div class="status-box" id="restricted-status" style="margin-top: 10px;">Security Offline</div>
+        </div>
+
+      </div>
+
+      <!-- Alert Logs Table -->
+      <div style="margin-top: 10px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+          <h3>Recent Intrusion Alerts</h3>
+          <button class="btn btn--object" onclick="raRefreshAlerts()" style="padding: 6px 14px; font-size: 0.82rem;">&#8635; Refresh</button>
+        </div>
+        <div style="background: rgba(0,0,0,0.3); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); overflow: hidden;">
+          <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem;">
+            <thead style="background: rgba(255,255,255,0.05);">
+              <tr>
+                <th style="padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,0.1);">Timestamp</th>
+                <th style="padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,0.1);">Status</th>
+                <th style="padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,0.1);">Snapshot</th>
+              </tr>
+            </thead>
+            <tbody id="alert-logs-body">
+              <tr>
+                <td colspan="3" style="padding: 18px; text-align: center; color: #555;">No alerts logged yet.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
   <footer>
     <p>Powered by OpenCV, TensorFlow &amp; Advanced AI Encodings</p>
   </footer>
 
-  <script src="/static/script.js?v=4"></script>
+  <script src="/static/script.js?v=5"></script>
 </body>
 </html>

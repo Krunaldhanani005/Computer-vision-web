@@ -272,14 +272,13 @@ input[type="text"]:focus {
 /* Video & Feed */
 .video-container {
   width: 100%;
-  aspect-ratio: 4 / 3;
-  background: rgba(0,0,0,0.4);
+  aspect-ratio: 16 / 9;
+  background: #000;
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid var(--border);
   position: relative;
-  margin-bottom: 20px;
-  box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
+  box-shadow: inset 0 0 30px rgba(0,0,0,0.9), 0 4px 20px rgba(0,0,0,0.4);
 }
 .video-container .placeholder {
   position: absolute;
@@ -292,11 +291,15 @@ input[type="text"]:focus {
 }
 .video-container .placeholder .icon { font-size: 32px; margin-bottom: 10px; opacity: 0.3; }
 
-#video-feed {
+/* All camera feed images — universal rule */
+.video-container img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: none;
+  position: absolute;
+  top: 0;
+  left: 0;
 }
 
 .controls {
@@ -531,9 +534,6 @@ main { display: flex; flex-direction: column; gap: 30px; }
 }
 
 #object-feed {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: none;
+  /* inherits from .video-container img */
 }
 

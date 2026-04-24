@@ -76,12 +76,14 @@ def _close_shared_camera():
 # ═══════════════════════════════════════════════════════════════════════════════
 #  GLOBAL STATE
 # ═══════════════════════════════════════════════════════════════════════════════
-is_streaming         = False   # face-recognition stream
+is_fr_streaming      = False   # face-recognition stream
 is_emotion_streaming = False   # emotion-detection stream
 is_object_streaming  = False   # object-detection stream
-_frame_counter         = 0
+is_restricted_streaming = False # restricted-area stream
+fr_frame_counter     = 0
 _emotion_frame_counter = 0
 _object_frame_counter  = 0
+restricted_frame_counter = 0
 
 
 # ── Utility ───────────────────────────────────────────────────────────────────
@@ -104,18 +106,18 @@ def _padded_crop(frame, x, y, w, h, pad: float = 0.15):
 # ═══════════════════════════════════════════════════════════════════════════════
 @app.route("/")
 def index():
-    clear_model()
     return render_template("index.html")
 
 
 @app.route("/train", methods=["POST"])
 def train():
     name  = request.form.get("name", "").strip()
+    person_type = request.form.get("type", "known").strip()
     files = request.files.getlist("images")
-    print(f"[train] name={name!r} files={len(files)}")
+    print(f"[train] name={name!r} type={person_type!r} files={len(files)}")
     if not name or not files:
         return "Provide name and at least 1 image", 400
-    success, message = train_model(files, name)
+    success, message = train_model(files, name, person_type)
     return "trained" if success else message, (200 if success else 400)
 
 
@@ -128,18 +130,18 @@ def clear_training():
 # ═══════════════════════════════════════════════════════════════════════════════
 #  FACE RECOGNITION STREAM
 # ═══════════════════════════════════════════════════════════════════════════════
-def generate_frames():
+def generate_fr_frames():
     """MJPEG generator — DNN face detection + face-recognition overlay."""
-    global is_streaming, _frame_counter
-    while is_streaming:
+    global is_fr_streaming, fr_frame_counter
+    while is_fr_streaming:
         frame = _latest_frame
         if frame is None:
             time.sleep(0.01)
             continue
         frame = frame.copy()
 
-        _frame_counter += 1
-        if _frame_counter % 2 != 0:   # process every 2nd frame for smooth FPS
+        fr_frame_counter += 1
+        if fr_frame_counter % 2 != 0:   # process every 2nd frame for smooth FPS
             time.sleep(0.01)
             continue
 
@@ -151,9 +153,17 @@ def generate_frames():
             ox = int(x / scale);  oy = int(y / scale)
             ow = int(w / scale);  oh = int(h / scale)
 
-            raw_name  = recognize(frame, (ox, oy, ow, oh))
-            smooth_name = _identity_tracker.update(ox, oy, ow, oh, raw_name)
-            color = (0, 255, 0) if smooth_name != "Unknown" else (0, 0, 255)
+            raw_name, p_type = recognize(frame, (ox, oy, ow, oh))
+            smooth_name, smooth_type = _identity_tracker.update(ox, oy, ow, oh, raw_name, p_type)
+            
+            if smooth_name != "Unknown":
+                if smooth_type == "blacklist":
+                    color = (0, 0, 255) # Red for blacklist
+                    smooth_name = f"ALERT: {smooth_name}"
+                else:
+                    color = (0, 255, 0) # Green for known
+            else:
+                color = (0, 165, 255) # Orange for unknown
 
             cv2.rectangle(frame, (ox, oy), (ox + ow, oy + oh), color, 2)
             cv2.putText(frame, smooth_name, (ox, oy - 10),
@@ -165,26 +175,31 @@ def generate_frames():
         yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
 
 
-@app.route("/video_feed")
-def video_feed():
-    return Response(generate_frames(),
+@app.route("/fr_video_feed")
+def fr_video_feed():
+    return Response(generate_fr_frames(),
                     mimetype="multipart/x-mixed-replace; boundary=frame")
 
 
-@app.route("/start_camera", methods=["POST"])
-def start_camera():
-    global is_streaming
+@app.route("/start_fr_camera", methods=["POST"])
+def start_fr_camera():
+    global is_fr_streaming
+    
+    # Reload encodings when camera starts (per user requirement)
+    from models.face_recognition.face_recognition_model import load_encodings_from_db
+    load_encodings_from_db()
+    
     if not _open_shared_camera():
         return jsonify({"success": False, "message": "Cannot open webcam."}), 500
-    is_streaming = True
+    is_fr_streaming = True
     return jsonify({"success": True})
 
 
-@app.route("/stop_camera", methods=["POST"])
-def stop_camera():
-    global is_streaming
-    is_streaming = False
-    if not is_emotion_streaming and not is_object_streaming:
+@app.route("/stop_fr_camera", methods=["POST"])
+def stop_fr_camera():
+    global is_fr_streaming
+    is_fr_streaming = False
+    if not is_emotion_streaming and not is_object_streaming and not is_restricted_streaming:
         _close_shared_camera()
     return jsonify({"success": True})
 
@@ -252,7 +267,7 @@ def start_emotion_camera():
 def stop_emotion_camera():
     global is_emotion_streaming
     is_emotion_streaming = False
-    if not is_streaming and not is_object_streaming:
+    if not is_fr_streaming and not is_object_streaming and not is_restricted_streaming:
         _close_shared_camera()
     return jsonify({"success": True})
 
@@ -300,9 +315,119 @@ def start_object_camera():
 def stop_object_camera():
     global is_object_streaming
     is_object_streaming = False
-    if not is_streaming and not is_emotion_streaming:
+    if not is_fr_streaming and not is_emotion_streaming and not is_restricted_streaming:
         _close_shared_camera()
     return jsonify({"success": True})
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  RESTRICTED AREA DETECTION STREAM
+# ═══════════════════════════════════════════════════════════════════════════════
+def generate_restricted_frames():
+    """MJPEG generator — full Restricted Area pipeline (YOLO → face → match)."""
+    global is_restricted_streaming, restricted_frame_counter
+    from models.restricted_area import process_frame
+
+    while is_restricted_streaming:
+        frame = _latest_frame
+        if frame is None:
+            time.sleep(0.01)
+            continue
+        frame = frame.copy()
+
+        restricted_frame_counter += 1
+        if restricted_frame_counter % 3 != 0:   # run pipeline at ~10 FPS
+            time.sleep(0.01)
+            continue
+
+        frame = process_frame(frame)
+
+        _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
+
+@app.route("/restricted_video_feed")
+def restricted_video_feed():
+    return Response(generate_restricted_frames(),
+                    mimetype="multipart/x-mixed-replace; boundary=frame")
+
+@app.route("/start_restricted_camera", methods=["POST"])
+def start_restricted_camera():
+    global is_restricted_streaming
+    # Load fresh known-person encodings from MongoDB into RAM cache
+    from models.restricted_area import load_known_persons
+    load_known_persons()
+
+    if not _open_shared_camera():
+        return jsonify({"success": False, "message": "Cannot open webcam."}), 500
+    is_restricted_streaming = True
+    return jsonify({"success": True})
+
+@app.route("/stop_restricted_camera", methods=["POST"])
+def stop_restricted_camera():
+    global is_restricted_streaming
+    is_restricted_streaming = False
+    if not is_fr_streaming and not is_emotion_streaming and not is_object_streaming:
+        _close_shared_camera()
+    return jsonify({"success": True})
+
+
+@app.route("/add_known_person", methods=["POST"])
+def add_known_person():
+    """
+    Register an authorised person for Restricted Area detection.
+    Expects multipart/form-data:
+        name   : str
+        images : 1+ image files
+    Stores face encodings in restricted_area_db.known_persons.
+    Images are NEVER saved to disk.
+    """
+    from models.restricted_area.face_handler import extract_encoding_from_image
+    from models.restricted_area.database    import insert_known_person
+
+    name = request.form.get("name", "").strip()
+    if not name:
+        return jsonify({"success": False, "message": "Name is required."}), 400
+
+    files = request.files.getlist("images")
+    if len(files) < 1:
+        return jsonify({"success": False, "message": "Upload at least 1 image."}), 400
+
+    success_count = 0
+    skipped_count = 0
+
+    for f in files:
+        img_bytes = f.read()
+        if not img_bytes:
+            skipped_count += 1
+            continue
+
+        encoding = extract_encoding_from_image(img_bytes)
+        if encoding is None:
+            skipped_count += 1
+            continue
+
+        if insert_known_person(name, encoding):
+            success_count += 1
+        else:
+            skipped_count += 1
+
+    if success_count == 0:
+        return jsonify({
+            "success": False,
+            "message": f"No valid faces found in {len(files)} image(s). Upload clear, front-facing photos."
+        }), 422
+
+    return jsonify({
+        "success": True,
+        "message": f"Registered '{name}' with {success_count} encoding(s). ({skipped_count} skipped)"
+    })
+
+
+@app.route("/get_alerts")
+def get_alerts():
+    """Return the 20 most-recent intrusion alerts as JSON for the UI table."""
+    from models.restricted_area.database import get_recent_alerts
+    return jsonify(get_recent_alerts())
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  LICENSE PLATE DETECTION STREAM

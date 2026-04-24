@@ -33,8 +33,10 @@ function setExternalStatus(msg, type) {
 
 function trainModel() {
     const nameElem = document.getElementById("name");
+    const typeElem = document.getElementById("person-type");
     if (!nameElem) return;
     const name = nameElem.value.trim();
+    const personType = typeElem ? typeElem.value : "known";
 
     if (!name || images.length === 0) {
         setExternalStatus("Enter name and upload images", "error");
@@ -46,6 +48,7 @@ function trainModel() {
 
     const formData = new FormData();
     formData.append("name", name);
+    formData.append("type", personType);
     images.forEach(img => formData.append("images", img));
 
     fetch("/train", { method: "POST", body: formData })
@@ -69,24 +72,85 @@ function trainModel() {
         });
 }
 
-function cancelTraining() {
-    images = [];
-    const nameElem = document.getElementById("name");
-    const fileInput = document.getElementById("fileInput");
-    if (nameElem) nameElem.value = "";
-    if (fileInput) fileInput.value = "";
-    renderImages();
-    setExternalStatus('Clearing training memory...', 'info');
 
-    fetch("/clear_training", { method: "POST" })
-        .then(() => {
-            setExternalStatus('Training cleared', 'info');
-            setTimeout(() => setExternalStatus('Ready', ''), 2000);
+// ── Restricted Area — registration helpers ────────────────────────────────────
+let raImages = [];
+
+function raHandleUpload(files) {
+    for (let f of files) raImages.push(f);
+    raRenderPreviews();
+}
+
+function raRenderPreviews() {
+    const container = document.getElementById('ra-preview');
+    if (!container) return;
+    container.innerHTML = '';
+    raImages.forEach((file, i) => {
+        const url = URL.createObjectURL(file);
+        container.innerHTML += `
+        <div class="img-wrapper">
+            <img src="${url}" width="60">
+            <button class="remove-btn" onclick="event.stopPropagation(); raRemoveImage(${i})">✖</button>
+        </div>`;
+    });
+}
+
+function raRemoveImage(index) {
+    raImages.splice(index, 1);
+    raRenderPreviews();
+}
+
+function setRaStatus(msg, type) {
+    const el = document.getElementById('ra-register-status');
+    if (el) { el.textContent = msg; el.className = 'status-box ' + type; }
+}
+
+function raRegisterPerson() {
+    const name = (document.getElementById('ra-name') || {}).value?.trim();
+    if (!name) { setRaStatus('Enter a name.', 'error'); return; }
+    if (raImages.length === 0) { setRaStatus('Upload at least 1 image.', 'error'); return; }
+
+    setRaStatus('Processing encodings...', 'info');
+    const fd = new FormData();
+    fd.append('name', name);
+    raImages.forEach(img => fd.append('images', img));
+
+    fetch('/add_known_person', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                setRaStatus(data.message, 'success');
+                raImages = [];
+                document.getElementById('ra-name').value = '';
+                raRenderPreviews();
+            } else {
+                setRaStatus(data.message, 'error');
+            }
+            setTimeout(() => setRaStatus('Ready', ''), 5000);
         })
-        .catch(() => {
-            setExternalStatus('Session cache reset', 'info');
-            setTimeout(() => setExternalStatus('Ready', ''), 2000);
-        });
+        .catch(() => { setRaStatus('Server error.', 'error'); });
+}
+
+function raRefreshAlerts() {
+    fetch('/get_alerts')
+        .then(r => r.json())
+        .then(alerts => {
+            const tbody = document.getElementById('alert-logs-body');
+            if (!tbody) return;
+            if (!alerts.length) {
+                tbody.innerHTML = '<tr><td colspan="3" style="padding:18px;text-align:center;color:#555;">No alerts logged yet.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = alerts.map(a => `
+                <tr>
+                    <td style="padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.06);">${a.timestamp}</td>
+                    <td style="padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.06);color:var(--danger);">&#x26A0; ${a.status}</td>
+                    <td style="padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.06);">
+                        ${a.image_path ? `<a href="/${a.image_path}" target="_blank" style="color:var(--accent);">View</a>` : '—'}
+                    </td>
+                </tr>`).join('');
+        })
+        .catch(() => {});
 }
 
 // ── DOM Ready — camera controls ───────────────────────────────────────────────
@@ -162,10 +226,33 @@ document.addEventListener('DOMContentLoaded', () => {
         setObjectStatus('Ready');
     }
 
+    // ── Restricted Area Security controls ─────────────────────────────────────
+    const restrictedStartBtn = document.getElementById('restricted-start-btn');
+    const restrictedStopBtn = document.getElementById('restricted-stop-btn');
+    const restrictedFeed = document.getElementById('restricted-feed');
+    const restrictedPlaceholder = document.getElementById('restricted-placeholder');
+    const restrictedIndicator = document.getElementById('restricted-indicator');
+    const restrictedStatus = document.getElementById('restricted-status');
+
+    function setRestrictedStatus(msg, type) {
+        if (!restrictedStatus) return;
+        restrictedStatus.textContent = msg;
+        restrictedStatus.className = 'status-box ' + type;
+    }
+
+    function resetRestrictedUI() {
+        if (restrictedFeed) { restrictedFeed.src = ''; restrictedFeed.style.display = 'none'; }
+        if (restrictedPlaceholder) restrictedPlaceholder.style.display = 'flex';
+        if (restrictedIndicator) { restrictedIndicator.classList.remove('active'); restrictedIndicator.style.color = 'var(--text-dim)'; restrictedIndicator.textContent = 'READY'; }
+        if (restrictedStartBtn) restrictedStartBtn.style.display = 'flex';
+        if (restrictedStopBtn) restrictedStopBtn.style.display = 'none';
+        setRestrictedStatus('Security Offline');
+    }
+
     // ── Feature isolation — only one stream at a time ─────────────────────────
     async function stopAllFeatures() {
         if (activeFeature === 'face') {
-            await fetch('/stop_camera', { method: 'POST' }).catch(() => { });
+            await fetch('/stop_fr_camera', { method: 'POST' }).catch(() => { });
             resetFaceUI();
         } else if (activeFeature === 'emotion') {
             await fetch('/stop_emotion_camera', { method: 'POST' }).catch(() => { });
@@ -173,6 +260,9 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (activeFeature === 'object') {
             await fetch('/stop_object_camera', { method: 'POST' }).catch(() => { });
             resetObjectUI();
+        } else if (activeFeature === 'restricted') {
+            await fetch('/stop_restricted_camera', { method: 'POST' }).catch(() => { });
+            resetRestrictedUI();
         }
         activeFeature = null;
     }
@@ -183,12 +273,12 @@ document.addEventListener('DOMContentLoaded', () => {
             await stopAllFeatures();
             setStatus('Starting webcam...', 'info');
             try {
-                const resp = await fetch('/start_camera', { method: 'POST' });
+                const resp = await fetch('/start_fr_camera', { method: 'POST' });
                 const result = await resp.json();
                 if (result.success) {
                     activeFeature = 'face';
                     if (placeholder) placeholder.style.display = 'none';
-                    if (videoFeed) { videoFeed.style.display = 'block'; videoFeed.src = `/video_feed?t=${Date.now()}`; }
+                    if (videoFeed) { videoFeed.style.display = 'block'; videoFeed.src = `/fr_video_feed?t=${Date.now()}`; }
                     if (indicator) { indicator.classList.add('active'); indicator.style.color = 'var(--success)'; indicator.textContent = 'DETECTING...'; }
                     if (startBtn) startBtn.style.display = 'none';
                     if (stopBtn) stopBtn.style.display = 'flex';
@@ -205,7 +295,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (stopBtn) {
         stopBtn.addEventListener('click', async () => {
             try {
-                await fetch('/stop_camera', { method: 'POST' });
+                await fetch('/stop_fr_camera', { method: 'POST' });
                 activeFeature = null;
                 resetFaceUI();
                 setStatus('Camera stopped.', 'info');
@@ -291,6 +381,45 @@ document.addEventListener('DOMContentLoaded', () => {
                 setTimeout(() => setObjectStatus('Ready', ''), 3000);
             } catch (err) {
                 setObjectStatus('Error stopping camera.', 'error');
+            }
+        });
+    }
+
+    // ── Restricted Area Security — event listeners ────────────────────────────
+    if (restrictedStartBtn) {
+        restrictedStartBtn.addEventListener('click', async () => {
+            await stopAllFeatures();
+            setRestrictedStatus('Starting security feed...', 'info');
+            try {
+                const resp = await fetch('/start_restricted_camera', { method: 'POST' });
+                const result = await resp.json();
+                if (result.success) {
+                    activeFeature = 'restricted';
+                    if (restrictedPlaceholder) restrictedPlaceholder.style.display = 'none';
+                    if (restrictedFeed) { restrictedFeed.style.display = 'block'; restrictedFeed.src = `/restricted_video_feed?t=${Date.now()}`; }
+                    if (restrictedIndicator) { restrictedIndicator.classList.add('active'); restrictedIndicator.style.color = 'var(--danger)'; restrictedIndicator.textContent = 'MONITORING...'; }
+                    if (restrictedStartBtn) restrictedStartBtn.style.display = 'none';
+                    if (restrictedStopBtn) restrictedStopBtn.style.display = 'flex';
+                    setRestrictedStatus('Security Monitoring Active.', 'success');
+                } else {
+                    setRestrictedStatus(result.message || 'Could not start camera.', 'error');
+                }
+            } catch (err) {
+                setRestrictedStatus('Could not start security camera.', 'error');
+            }
+        });
+    }
+
+    if (restrictedStopBtn) {
+        restrictedStopBtn.addEventListener('click', async () => {
+            try {
+                await fetch('/stop_restricted_camera', { method: 'POST' });
+                activeFeature = null;
+                resetRestrictedUI();
+                setRestrictedStatus('Security monitoring offline.', 'info');
+                setTimeout(() => setRestrictedStatus('Ready', ''), 3000);
+            } catch (err) {
+                setRestrictedStatus('Error stopping camera.', 'error');
             }
         });
     }

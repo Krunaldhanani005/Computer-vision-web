@@ -23,3 +23,6 @@ env/
 # ── OS ──
 .DS_Store
 Thumbs.db
+
+# Alerts images (DO NOT PUSH)
+static/alerts/

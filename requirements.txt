@@ -10,3 +10,4 @@ setuptools<70
 tensorflow
 tf-keras
 ultralytics
+pymongo==4.17.0
