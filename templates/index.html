@@ -1,331 +1,198 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="Computer Vision AI Demo — Face Recognition + Emotion Detection." />
-  <title>Computer Vision models</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/style.css" />
-</head>
-<body>
+{% extends "base.html" %}
+{% block title %}CV Platform — Intelligent Vision AI{% endblock %}
 
-  <!-- Background glow effects -->
-  <div class="bg-glow bg-glow--1"></div>
-  <div class="bg-glow bg-glow--2"></div>
+{% block content %}
 
-  <!-- Header -->
-  <header>
-    <div class="logo">
-      <span class="logo-text">Computer Vision models</span>
-    </div>
-    <p class="tagline">Real-Time Facial Recognition &amp; Emotion Detection</p>
-  </header>
+<!-- ══ HERO ═══════════════════════════════════════════════════ -->
+<section class="hero">
+  <!-- ambient glow orbs -->
+  <div class="hero-glow hero-glow-1"></div>
+  <div class="hero-glow hero-glow-2"></div>
+  <div class="hero-glow hero-glow-3"></div>
 
-  <!-- Main Content -->
-  <main>
+  <div class="hero-content">
 
-    <!-- ── Card 1 : Face Recognition ─────────────────────────────────────── -->
-    <section class="card">
-      <div class="card-header">
-        <div class="status-indicator" id="live-indicator">ACTIVE</div>
-        <h2>Identity Engine</h2>
-      </div>
-
-      <div class="card-body">
-        <div class="split-layout">
-
-          <!-- Form Side -->
-          <div class="form-side">
-            <div class="form-group">
-              <label for="name">Identity Name</label>
-              <input type="text" id="name" placeholder="E.g., John Doe" autocomplete="off"/>
-            </div>
-
-            <div class="form-group">
-              <label for="person-type">Person Type</label>
-              <select id="person-type" style="width: 100%; padding: 12px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.2); color: white; border-radius: 8px; outline: none; margin-top: 8px;">
-                <option value="known" style="color: black;">Known</option>
-                <option value="blacklist" style="color: black;">Blacklist</option>
-              </select>
-            </div>
-
-            <div class="form-group">
-              <label>Training Samples</label>
-              <div class="upload-zone" id="upload-zone" onclick="document.getElementById('fileInput').click()">
-                <div class="icon">⊞</div>
-                <p>Drag photos here or click to browse</p>
-                <input type="file" id="fileInput" accept="image/*" multiple hidden onchange="handleUpload(this.files)"/>
-                <div class="preview-container" id="preview"></div>
-              </div>
-            </div>
-
-            <div style="margin-top: 15px;">
-              <button class="btn btn--primary" id="train-btn" onclick="trainModel()" style="width: 100%;">
-                Train Face
-              </button>
-            </div>
-            <div class="status-box" id="global-status" style="margin-top: 15px;">Ready</div>
-          </div>
-
-          <!-- Video Side -->
-          <div class="view-side">
-            <div class="video-container" id="video-container">
-              <div class="placeholder" id="video-placeholder">
-                <div class="icon">⌬</div>
-                <p>Webcam Offline</p>
-              </div>
-              <img id="video-feed" src="" alt="Live feed" />
-            </div>
-
-            <div class="controls" style="display: flex; gap: 10px; margin-top: 15px;">
-              <button class="btn btn--success" id="start-btn" style="flex: 1;">Start Recognition</button>
-              <button class="btn btn--danger" id="stop-btn" style="display: none; flex: 1;">Stop Recognition</button>
-            </div>
-          </div>
-
-        </div>
-      </div>
-    </section>
-
-
-    <!-- ── Card 2 : Emotion Detection ──────────────────────────────────────── -->
-    <section class="card card--emotion">
-      <div class="card-header">
-        <div class="status-indicator" id="emotion-indicator">READY</div>
-        <h2>Emotion Engine</h2>
-      </div>
-
-      <div class="card-body">
-        <div class="emotion-layout">
-
-          <!-- Info Side -->
-          <div class="emotion-info-side">
-            <p class="emotion-desc">
-              Real-time facial emotion analysis powered by a CNN trained on the FER dataset.
-              Point the webcam at a face and the model will classify the dominant emotion
-              every frame.
-            </p>
-
-            <div class="emotion-labels-grid">
-              <span class="emotion-chip angry">Angry</span>
-              <span class="emotion-chip disgust">Disgust</span>
-              <span class="emotion-chip fear">Fear</span>
-              <span class="emotion-chip happy">Happy</span>
-              <span class="emotion-chip sad">Sad</span>
-            </div>
-
-            <div class="emotion-controls-wrap">
-              <button class="btn btn--emotion" id="emotion-start-btn">
-                Start Emotion Detection
-              </button>
-              <button class="btn btn--danger" id="emotion-stop-btn" style="display: none;">
-                Stop
-              </button>
-            </div>
-
-            <div class="status-box" id="emotion-status">Ready</div>
-          </div>
-
-          <!-- Feed Side -->
-          <div class="view-side">
-            <div class="video-container emotion-feed-container" id="emotion-video-container">
-              <div class="placeholder" id="emotion-placeholder">
-                <div class="icon">◈</div>
-                <p>Emotion Cam Offline</p>
-              </div>
-              <img id="emotion-feed" src="" alt="Emotion feed" />
-            </div>
-          </div>
-
-        </div>
-      </div>
-    </section>
-
-    <!-- ── Card 3 : Object Detection ──────────────────────────────────────── -->
-    <section class="card card--object">
-      <div class="card-header">
-        <div class="status-indicator" id="object-indicator">READY</div>
-        <h2>Object Detection</h2>
-      </div>
-
-      <div class="card-body">
-        <div class="object-layout">
-
-          <!-- Info Side -->
-          <div class="object-info-side">
-            <p class="object-desc">
-              Real-time object detection powered by YOLOv8. Identifies bottles,
-              chairs, watches, and pens in your environment with bounding boxes
-              and confidence scores every frame.
-            </p>
-
-            <div class="object-labels-grid">
-              <span class="object-chip bottle">Bottle</span>
-              <span class="object-chip chair">Chair</span>
-              <span class="object-chip clock">Watch (clock)</span>
-              <span class="object-chip phone">Mobile Phone</span>
-            </div>
-
-            <div class="object-controls-wrap">
-              <button class="btn btn--object" id="object-start-btn">
-                Start Object Detection
-              </button>
-              <button class="btn btn--danger" id="object-stop-btn" style="display: none;">
-                Stop
-              </button>
-            </div>
-
-            <div class="status-box" id="object-status">Ready</div>
-          </div>
-
-          <!-- Feed Side -->
-          <div class="view-side">
-            <div class="video-container object-feed-container" id="object-video-container">
-              <div class="placeholder" id="object-placeholder">
-                <div class="icon">◉</div>
-                <p>Object Cam Offline</p>
-              </div>
-              <img id="object-feed" src="" alt="Object detection feed" />
-            </div>
-          </div>
-
-        </div>
-      </div>
-    </section>
-
-    <!-- ── Card 4 : Vehicle Detection ──────────────────────────────────────── -->
-    <section class="card card--vehicle">
-      <div class="card-header">
-        <div class="status-indicator" id="vehicle-indicator">READY</div>
-        <h2>Vehicle Detection</h2>
-      </div>
-
-      <div class="card-body">
-        <div class="container" style="display: flex; gap: 20px; flex-wrap: wrap;">
-          <div class="video-section" style="flex: 1; min-width: 300px;">
-            <p class="vehicle-desc" style="margin-bottom: 15px;">
-              Upload a video file (Max 20MB) to run vehicle detection.
-            </p>
-            <form id="uploadForm" enctype="multipart/form-data" style="margin-bottom: 20px; background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px;">
-              <div style="margin-bottom: 10px;">
-                <input type="file" id="videoInput" name="video" accept="video/*" style="color: #fff;">
-              </div>
-              <button type="submit" class="btn btn--vehicle" id="vehicle-upload-btn" disabled style="background: #eab308; color: #000; display: inline-flex; align-items: center; gap: 8px; font-weight: bold; opacity: 0.5; cursor: not-allowed;">
-                <span id="upload-btn-text">Detect Vehicles</span>
-                <div id="upload-spinner" style="display: none; width: 16px; height: 16px; border: 2px solid #000; border-top: 2px solid transparent; border-radius: 50%; animation: spin 1s linear infinite;"></div>
-              </button>
-            </form>
-
-            <div class="status-box" id="vehicle-status" style="margin-bottom: 15px;">Ready</div>
-
-            <div class="video-container" style="background: #000; aspect-ratio: 16/9; display: flex; align-items: center; justify-content: center; border-radius: 8px; overflow: hidden; position: relative;">
-              <div class="placeholder" id="vehicle-placeholder" style="text-align: center; color: #888;">
-                <div class="icon" style="font-size: 32px; margin-bottom: 8px;">🚘</div>
-                <p>No Video Uploaded</p>
-              </div>
-              <img id="videoFeed" style="display: none; max-width: 100%; max-height: 100%; object-fit: contain; width: 100%;" alt="Processed Video Feed" />
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-  </main>
-
-  <!-- ── Card 5 : Restricted Area Detection ────────────────────────────────── -->
-  <section class="card">
-    <div class="card-header">
-      <div class="status-indicator" id="restricted-indicator">READY</div>
-      <h2>Restricted Area Security</h2>
+    <div class="hero-badge">
+      <div class="hero-badge-dot"></div>
+      <span class="hero-badge-text">Computer Vision AI Platform</span>
     </div>
 
-    <div class="card-body">
+    <h1 class="hero-title">
+      <span class="hero-title-plain">INTELLIGENT</span>
+      <span class="hero-title-grad">VISION PLATFORM</span>
+    </h1>
 
-      <!-- Top Row: Registration + Monitor -->
-      <div class="split-layout" style="margin-bottom: 25px;">
+    <p class="hero-desc">
+      Real-time AI-powered computer vision for enterprise security,
+      identity verification, emotion analysis, and environmental awareness —
+      all running locally, privately, and at full speed.
+    </p>
 
-        <!-- LEFT: Register Known Person -->
-        <div class="form-side">
-          <h3 style="margin-bottom: 12px; color: var(--success);">Register Known Person</h3>
-          <p style="color: #aaa; font-size: 0.88rem; margin-bottom: 14px; line-height: 1.5;">
-            Upload at least 3 clear, front-facing photos. Encodings are stored — images are discarded immediately.
-          </p>
-
-          <div class="form-group">
-            <label for="ra-name">Full Name</label>
-            <input type="text" id="ra-name" placeholder="E.g., Alice Johnson" autocomplete="off"/>
-          </div>
-
-          <div class="form-group" style="margin-top: 12px;">
-            <label>Photos (3+ recommended)</label>
-            <div class="upload-zone" id="ra-upload-zone" onclick="document.getElementById('ra-file-input').click()" style="min-height: 80px;">
-              <div class="icon" style="font-size: 1.6rem;">&#x229E;</div>
-              <p style="font-size: 0.85rem;">Click to select images</p>
-              <input type="file" id="ra-file-input" accept="image/*" multiple hidden onchange="raHandleUpload(this.files)"/>
-              <div class="preview-container" id="ra-preview"></div>
-            </div>
-          </div>
-
-          <button class="btn btn--success" id="ra-register-btn" onclick="raRegisterPerson()" style="width: 100%; margin-top: 14px;">
-            Register Person
-          </button>
-          <div class="status-box" id="ra-register-status" style="margin-top: 12px;">Ready</div>
-        </div>
-
-        <!-- RIGHT: Camera Monitor -->
-        <div class="view-side">
-          <div class="video-container" id="restricted-video-container">
-            <div class="placeholder" id="restricted-placeholder">
-              <div class="icon">&#x26E8;</div>
-              <p>Security Cam Offline</p>
-            </div>
-            <img id="restricted-feed" src="" alt="Restricted Area feed" style="display:none;" />
-          </div>
-
-          <!-- Start / Stop toggle -->
-          <div style="display: flex; gap: 10px; margin-top: 14px;">
-            <button class="btn btn--primary" id="restricted-start-btn" style="flex: 1;">&#x25B6; Start Monitoring</button>
-            <button class="btn btn--danger"  id="restricted-stop-btn"  style="flex: 1; display: none;">&#x25FC; Stop Monitoring</button>
-          </div>
-          <div class="status-box" id="restricted-status" style="margin-top: 10px;">Security Offline</div>
-        </div>
-
-      </div>
-
-      <!-- Alert Logs Table -->
-      <div style="margin-top: 10px;">
-        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
-          <h3>Recent Intrusion Alerts</h3>
-          <button class="btn btn--object" onclick="raRefreshAlerts()" style="padding: 6px 14px; font-size: 0.82rem;">&#8635; Refresh</button>
-        </div>
-        <div style="background: rgba(0,0,0,0.3); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); overflow: hidden;">
-          <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem;">
-            <thead style="background: rgba(255,255,255,0.05);">
-              <tr>
-                <th style="padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,0.1);">Timestamp</th>
-                <th style="padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,0.1);">Status</th>
-                <th style="padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,0.1);">Snapshot</th>
-              </tr>
-            </thead>
-            <tbody id="alert-logs-body">
-              <tr>
-                <td colspan="3" style="padding: 18px; text-align: center; color: #555;">No alerts logged yet.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
+    <div class="hero-cta">
+      <a href="/live-demo" class="p-btn-primary">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+        Explore Live Demo
+      </a>
+      <a href="/report" class="p-btn-outline">
+        <svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        View Reports
+      </a>
     </div>
-  </section>
 
-  <footer>
-    <p>Powered by OpenCV, TensorFlow &amp; Advanced AI Encodings</p>
-  </footer>
+    <div class="hero-stats">
+      <div class="hero-stat">
+        <span class="hero-stat-val">4</span>
+        <span class="hero-stat-lbl">AI Models</span>
+      </div>
+      <div class="hero-stat-div"></div>
+      <div class="hero-stat">
+        <span class="hero-stat-val">30+</span>
+        <span class="hero-stat-lbl">FPS Real-time</span>
+      </div>
+      <div class="hero-stat-div"></div>
+      <div class="hero-stat">
+        <span class="hero-stat-val">100%</span>
+        <span class="hero-stat-lbl">Local &amp; Private</span>
+      </div>
+      <div class="hero-stat-div"></div>
+      <div class="hero-stat">
+        <span class="hero-stat-val">CCTV</span>
+        <span class="hero-stat-lbl">IP Cam Support</span>
+      </div>
+    </div>
 
-  <script src="/static/script.js?v=5"></script>
-</body>
-</html>
+  </div>
+</section>
+
+<hr class="p-divider" />
+
+<!-- ══ CAPABILITIES ═══════════════════════════════════════════ -->
+<section class="section">
+
+  <div class="section-tag">Capabilities</div>
+  <h2 class="section-title">Advanced Computer Vision AI</h2>
+  <p class="section-sub">
+    Four production-grade models working together to deliver intelligent,
+    real-time perception across diverse environments.
+  </p>
+
+  <div class="features-grid">
+
+    <div class="feat-card">
+      <div class="feat-icon">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M3 21v-1a9 9 0 0118 0v1"/></svg>
+      </div>
+      <div class="feat-title">Face Recognition</div>
+      <div class="feat-desc">
+        DNN-powered face detection with 128-dimensional encoding matching.
+        Supports known, blacklist, and unknown person classification with
+        per-frame identity tracking.
+      </div>
+    </div>
+
+    <div class="feat-card">
+      <div class="feat-icon" style="background:linear-gradient(135deg,rgba(168,85,247,.18),rgba(139,92,246,.1));border-color:rgba(168,85,247,.18);">
+        <svg viewBox="0 0 24 24" style="stroke:#a855f7;"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+      </div>
+      <div class="feat-title">Emotion Detection</div>
+      <div class="feat-desc">
+        Keras CNN trained on the FER dataset classifying 7 emotions per frame —
+        Angry, Disgust, Fear, Happy, Sad, Neutral, and Surprise — with smoothing.
+      </div>
+    </div>
+
+    <div class="feat-card">
+      <div class="feat-icon" style="background:linear-gradient(135deg,rgba(249,115,22,.18),rgba(234,88,12,.1));border-color:rgba(249,115,22,.18);">
+        <svg viewBox="0 0 24 24" style="stroke:#f97316;"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      </div>
+      <div class="feat-title">Object Detection</div>
+      <div class="feat-desc">
+        YOLOv8 real-time object detection scoped to bottles, chairs,
+        watches, and mobile phones with bounding boxes and confidence scores.
+      </div>
+    </div>
+
+    <div class="feat-card">
+      <div class="feat-icon" style="background:linear-gradient(135deg,rgba(239,68,68,.18),rgba(220,38,38,.1));border-color:rgba(239,68,68,.18);">
+        <svg viewBox="0 0 24 24" style="stroke:#ef4444;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      </div>
+      <div class="feat-title">Restricted Area Security</div>
+      <div class="feat-desc">
+        YOLO person detection + face encoding matching against a registered
+        persons database. Logs intrusion alerts with timestamped snapshots in MongoDB.
+      </div>
+    </div>
+
+    <div class="feat-card">
+      <div class="feat-icon" style="background:linear-gradient(135deg,rgba(16,185,129,.18),rgba(5,150,105,.1));border-color:rgba(16,185,129,.18);">
+        <svg viewBox="0 0 24 24" style="stroke:#10b981;"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+      </div>
+      <div class="feat-title">Real-time Streaming</div>
+      <div class="feat-desc">
+        MJPEG multi-stream pipeline with frame-skip optimisation delivering
+        15–30 FPS. Supports webcam and authenticated RTSP / HTTP CCTV sources.
+      </div>
+    </div>
+
+    <div class="feat-card">
+      <div class="feat-icon" style="background:linear-gradient(135deg,rgba(245,158,11,.18),rgba(217,119,6,.1));border-color:rgba(245,158,11,.18);">
+        <svg viewBox="0 0 24 24" style="stroke:#f59e0b;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+      </div>
+      <div class="feat-title">Zone Definition</div>
+      <div class="feat-desc">
+        Draw custom monitoring zones directly on the video feed. Zones are
+        stored in MongoDB and the model only triggers alerts for detections
+        inside the defined boundary.
+      </div>
+    </div>
+
+    <div class="feat-card">
+      <div class="feat-icon" style="background:linear-gradient(135deg,rgba(59,130,246,.18),rgba(37,99,235,.1));border-color:rgba(59,130,246,.18);">
+        <svg viewBox="0 0 24 24" style="stroke:#3b82f6;"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+      </div>
+      <div class="feat-title">MongoDB Persistence</div>
+      <div class="feat-desc">
+        All face encodings, monitoring zones, known persons, and intrusion
+        alert records are stored persistently in MongoDB with full query
+        and reload support.
+      </div>
+    </div>
+
+    <div class="feat-card">
+      <div class="feat-icon" style="background:linear-gradient(135deg,rgba(236,72,153,.18),rgba(219,39,119,.1));border-color:rgba(236,72,153,.18);">
+        <svg viewBox="0 0 24 24" style="stroke:#ec4899;"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+      </div>
+      <div class="feat-title">Vehicle Detection</div>
+      <div class="feat-desc">
+        Upload a video file for YOLOv8-based vehicle and license plate
+        detection. Processes and streams annotated frames with bounding
+        boxes and OCR plate text.
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<hr class="p-divider" />
+
+<!-- ══ CALL TO ACTION STRIP ══════════════════════════════════ -->
+<section class="section" style="text-align:center;padding-top:64px;padding-bottom:72px;">
+  <div class="section-tag">Get Started</div>
+  <h2 class="section-title" style="margin-bottom:16px;">Ready to see it in action?</h2>
+  <p class="section-sub" style="margin:0 auto 40px;">
+    Select a model and launch the live detection feed directly in your browser.
+    No cloud, no subscriptions — everything runs locally on your machine.
+  </p>
+  <div class="hero-cta">
+    <a href="/live-demo" class="p-btn-primary">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+      Launch Live Demo
+    </a>
+    <a href="/details" class="p-btn-outline">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      Architecture Details
+    </a>
+  </div>
+</section>
+
+{% endblock %}

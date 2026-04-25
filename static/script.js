@@ -176,6 +176,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (indicator) { indicator.classList.remove('active'); indicator.style.color = 'var(--text-dim)'; indicator.textContent = 'ACTIVE'; }
         if (startBtn) startBtn.style.display = 'flex';
         if (stopBtn) stopBtn.style.display = 'none';
+        const zoneControls = document.getElementById('fr-zone-controls');
+        const zoneCanvas = document.getElementById('fr-zone-canvas');
+        if (zoneControls) zoneControls.style.display = 'none';
+        if (zoneCanvas) zoneCanvas.style.display = 'none';
         setStatus('Ready');
     }
 
@@ -270,10 +274,16 @@ document.addEventListener('DOMContentLoaded', () => {
     // ── Face Recognition — event listeners ───────────────────────────────────
     if (startBtn) {
         startBtn.addEventListener('click', async () => {
+            const sourceType = document.getElementById('fr-source-type')?.value || 'webcam';
+
             await stopAllFeatures();
-            setStatus('Starting webcam...', 'info');
+            setStatus('Starting camera...', 'info');
             try {
-                const resp = await fetch('/start_fr_camera', { method: 'POST' });
+                const resp = await fetch('/start_fr_camera', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ source: sourceType })
+                });
                 const result = await resp.json();
                 if (result.success) {
                     activeFeature = 'face';
@@ -282,7 +292,21 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (indicator) { indicator.classList.add('active'); indicator.style.color = 'var(--success)'; indicator.textContent = 'DETECTING...'; }
                     if (startBtn) startBtn.style.display = 'none';
                     if (stopBtn) stopBtn.style.display = 'flex';
-                    setStatus('AI Recognition Active.', 'success');
+                    
+                    const zoneControls = document.getElementById('fr-zone-controls');
+                    const zoneCanvas = document.getElementById('fr-zone-canvas');
+                    if (zoneControls) zoneControls.style.display = 'flex';
+                    if (zoneCanvas) {
+                        zoneCanvas.style.display = 'block';
+                        // Wait a tiny bit for display block to register layout for correct canvas size
+                        setTimeout(() => {
+                            if (typeof window.startDrawingZone === 'function') {
+                                window.startDrawingZone('fr');
+                            }
+                        }, 100);
+                    }
+
+                    setStatus('Camera Active. Draw zone to begin recognition.', 'success');
                 } else {
                     setStatus(result.message, 'error');
                 }
@@ -310,10 +334,16 @@ document.addEventListener('DOMContentLoaded', () => {
     // ── Emotion Detection — event listeners ───────────────────────────────────
     if (emotionStartBtn) {
         emotionStartBtn.addEventListener('click', async () => {
+            const sourceType = document.getElementById('emotion-source-type')?.value || 'webcam';
+
             await stopAllFeatures();
             setEmotionStatus('Starting emotion detection...', 'info');
             try {
-                const resp = await fetch('/start_emotion_camera', { method: 'POST' });
+                const resp = await fetch('/start_emotion_camera', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ source: sourceType })
+                });
                 const result = await resp.json();
                 if (result.success) {
                     activeFeature = 'emotion';
@@ -349,10 +379,16 @@ document.addEventListener('DOMContentLoaded', () => {
     // ── Object Detection — event listeners ────────────────────────────────────
     if (objectStartBtn) {
         objectStartBtn.addEventListener('click', async () => {
+            const sourceType = document.getElementById('object-source-type')?.value || 'webcam';
+
             await stopAllFeatures();
             setObjectStatus('Starting object detection...', 'info');
             try {
-                const resp = await fetch('/start_object_camera', { method: 'POST' });
+                const resp = await fetch('/start_object_camera', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ source: sourceType })
+                });
                 const result = await resp.json();
                 if (result.success) {
                     activeFeature = 'object';
@@ -388,10 +424,16 @@ document.addEventListener('DOMContentLoaded', () => {
     // ── Restricted Area Security — event listeners ────────────────────────────
     if (restrictedStartBtn) {
         restrictedStartBtn.addEventListener('click', async () => {
+            const sourceType = document.getElementById('restricted-source-type')?.value || 'webcam';
+
             await stopAllFeatures();
             setRestrictedStatus('Starting security feed...', 'info');
             try {
-                const resp = await fetch('/start_restricted_camera', { method: 'POST' });
+                const resp = await fetch('/start_restricted_camera', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ source: sourceType })
+                });
                 const result = await resp.json();
                 if (result.success) {
                     activeFeature = 'restricted';
@@ -553,4 +595,138 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+
+    // ── Camera Source Logic ───────────────────────────────────────────────────
+    // ── Camera Source UI Toggle ──────────────────────────────────────────────
+    window.toggleCardCameraInput = function(prefix) {
+        const typeSelect = document.getElementById(`${prefix}-source-type`);
+        const cctvContainer = document.getElementById(`${prefix}-cctv-container`);
+        if (typeSelect && cctvContainer) {
+            cctvContainer.style.display = typeSelect.value === 'cctv' ? 'block' : 'none';
+        }
+    };
+
+    // ── Zone Drawing Logic ───────────────────────────────────────────────────
+    let isDrawing = false;
+    let startX, startY;
+    let currentZone = null;
+
+    window.startDrawingZone = function(prefix) {
+        const canvas = document.getElementById(`${prefix}-zone-canvas`);
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        canvas.width = canvas.offsetWidth;
+        canvas.height = canvas.offsetHeight;
+        
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        currentZone = null;
+
+        canvas.onmousedown = (e) => {
+            isDrawing = true;
+            
+            // Sync internal resolution with actual display size just before drawing
+            if (canvas.width !== canvas.offsetWidth || canvas.height !== canvas.offsetHeight) {
+                canvas.width = canvas.offsetWidth;
+                canvas.height = canvas.offsetHeight;
+            }
+            
+            const rect = canvas.getBoundingClientRect();
+            startX = e.clientX - rect.left;
+            startY = e.clientY - rect.top;
+
+            // Clear previous zone drawing to prevent ghost visuals
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        };
+
+        canvas.onmousemove = (e) => {
+            if (!isDrawing) return;
+            const rect = canvas.getBoundingClientRect();
+            const currentX = e.clientX - rect.left;
+            const currentY = e.clientY - rect.top;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.strokeStyle = '#ffff00';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(startX, startY, currentX - startX, currentY - startY);
+        };
+
+        canvas.onmouseup = (e) => {
+            if (!isDrawing) return;
+            isDrawing = false;
+            const rect = canvas.getBoundingClientRect();
+            const currentX = e.clientX - rect.left;
+            const currentY = e.clientY - rect.top;
+
+            // Normalized coordinates (0.0 to 1.0) using actual screen rectangle
+            const x_percent = Math.min(startX, currentX) / rect.width;
+            const y_percent = Math.min(startY, currentY) / rect.height;
+            const w_percent = Math.abs(currentX - startX) / rect.width;
+            const h_percent = Math.abs(currentY - startY) / rect.height;
+
+            // Prevent accidental clicks (w or h == 0) from registering as a valid zone
+            if (w_percent > 0.01 && h_percent > 0.01) {
+                currentZone = {
+                    x: x_percent,
+                    y: y_percent,
+                    w: w_percent,
+                    h: h_percent
+                };
+                console.log("[DEBUG] Drawn Normalized Zone:", currentZone);
+            } else {
+                currentZone = null;
+                ctx.clearRect(0, 0, canvas.width, canvas.height); // clear the dot/tiny line
+            }
+        };
+    };
+
+    window.saveZone = async function(prefix) {
+        if (!currentZone) {
+            alert('Please draw a zone on the video feed first.');
+            return;
+        }
+        
+        try {
+            const resp = await fetch('/save_zone', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ zone: currentZone })
+            });
+            const result = await resp.json();
+            if (result.success) {
+                const canvas = document.getElementById(`${prefix}-zone-canvas`);
+                if (canvas) {
+                    const ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                }
+                if (prefix === 'fr') setStatus('Zone saved. Recognition active.', 'success');
+            } else {
+                alert('Failed to save zone.');
+            }
+        } catch (err) {
+            alert('Error saving zone.');
+        }
+    };
+
+    window.clearZone = async function(prefix) {
+        try {
+            const resp = await fetch('/save_zone', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ zone: null })
+            });
+            const result = await resp.json();
+            if (result.success) {
+                currentZone = null;
+                const canvas = document.getElementById(`${prefix}-zone-canvas`);
+                if (canvas) {
+                    const ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                }
+                if (prefix === 'fr') setStatus('Zone cancelled. Camera active. Draw zone to begin recognition.', 'info');
+            }
+        } catch (err) {
+            alert('Error clearing zone.');
+        }
+    };
+
 });

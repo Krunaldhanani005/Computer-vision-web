@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}Emotion Detection — CV Platform{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="/static/style.css" />
+<style>
+  body.platform-body main { max-width:none !important; margin:0 !important; }
+  .model-workspace .card-body { padding: 28px 32px; }
+  .model-workspace .emotion-layout {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 28px;
+    align-items: start;
+  }
+  .model-workspace .video-container {
+    aspect-ratio: 16/9;
+    min-height: 360px;
+  }
+  .model-workspace .video-container img { width:100%; height:100%; object-fit:cover; }
+  @media (max-width:900px) {
+    .model-workspace .emotion-layout { grid-template-columns:1fr; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-wrap p-page-enter">
+
+  <div class="page-eyebrow">
+    <a href="/live-demo" class="page-back">
+      <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+      Back to Demo
+    </a>
+  </div>
+
+  <div class="page-hd">
+    <div class="page-hd-inner">
+      <div class="page-hd-icon page-hd-icon--emotion">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+      </div>
+      <div class="page-hd-info">
+        <h1 class="page-title">Emotion Detection</h1>
+        <p class="page-desc">
+          Keras CNN trained on the FER-2013 dataset. Classifies 7 emotions per
+          frame with Haar cascade face detection and temporal smoothing for stable
+          confidence display.
+        </p>
+        <div class="page-tags">
+          <span class="p-tag p-tag--purple">Keras CNN</span>
+          <span class="p-tag p-tag--purple">FER-2013</span>
+          <span class="p-tag p-tag--purple">OpenCV Haar</span>
+          <span class="p-tag p-tag--live">&#9679; Live</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="model-workspace">
+    <section class="card card--emotion" style="margin:0;">
+      <div class="card-header">
+        <div class="status-indicator" id="emotion-indicator">READY</div>
+        <h2>Emotion Engine</h2>
+      </div>
+
+      <div class="card-body">
+        <div class="emotion-layout">
+
+          <!-- Info Side -->
+          <div class="emotion-info-side">
+            <p class="emotion-desc">
+              Real-time facial emotion analysis powered by a CNN trained on the FER dataset.
+              Point the webcam at a face and the model will classify the dominant emotion
+              every frame with a confidence percentage.
+            </p>
+
+            <div class="emotion-labels-grid" style="margin:20px 0;">
+              <span class="emotion-chip angry">Angry</span>
+              <span class="emotion-chip disgust">Disgust</span>
+              <span class="emotion-chip fear">Fear</span>
+              <span class="emotion-chip happy">Happy</span>
+              <span class="emotion-chip sad">Sad</span>
+              <span class="emotion-chip" style="background:rgba(148,163,184,.15);color:#94a3b8;border:1px solid rgba(148,163,184,.2);">Neutral</span>
+              <span class="emotion-chip" style="background:rgba(251,191,36,.1);color:#fbbf24;border:1px solid rgba(251,191,36,.2);">Surprise</span>
+            </div>
+
+            <div class="source-selector" style="margin-top:15px;background:rgba(0,0,0,.2);padding:10px;border-radius:8px;">
+              <select id="emotion-source-type" style="width:100%;padding:8px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.2);color:white;border-radius:4px;outline:none;margin-bottom:8px;" onchange="toggleCardCameraInput('emotion')">
+                <option value="webcam" style="color:black;">Webcam</option>
+                <option value="cctv"   style="color:black;">CCTV (Auto)</option>
+              </select>
+              <div id="emotion-cctv-container" style="display:none;margin-bottom:8px;">
+                <div style="padding:9px 12px;background:rgba(14,165,233,.06);border:1px solid rgba(14,165,233,.18);border-radius:6px;display:flex;align-items:center;gap:8px;font-size:.78rem;color:#7dd3fc;">
+                  <span>&#9679;</span> Auto-connecting using stored credentials
+                </div>
+              </div>
+              <div class="emotion-controls-wrap" style="display:flex;gap:10px;margin-top:0;">
+                <button class="btn btn--emotion" id="emotion-start-btn" style="flex:1;">Start Emotion Detection</button>
+                <button class="btn btn--danger"  id="emotion-stop-btn"  style="display:none;flex:1;">Stop</button>
+              </div>
+            </div>
+
+            <div class="status-box" id="emotion-status">Ready</div>
+          </div>
+
+          <!-- Feed Side -->
+          <div class="view-side">
+            <div class="video-container emotion-feed-container" id="emotion-video-container">
+              <div class="placeholder" id="emotion-placeholder">
+                <div class="icon">◈</div>
+                <p>Emotion Cam Offline</p>
+              </div>
+              <img id="emotion-feed" src="" alt="Emotion feed" />
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/script.js?v=5"></script>
+{% endblock %}

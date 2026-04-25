@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block title %}Restricted Area Security — CV Platform{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="/static/style.css" />
+<style>
+  body.platform-body main { max-width:none !important; margin:0 !important; }
+  .model-workspace .card-body { padding: 28px 32px; }
+  .model-workspace .split-layout {
+    display: grid;
+    grid-template-columns: 360px 1fr;
+    gap: 28px;
+    align-items: start;
+  }
+  .model-workspace .video-container {
+    aspect-ratio: 16/9;
+    min-height: 340px;
+  }
+  .model-workspace .video-container img { width:100%; height:100%; object-fit:cover; }
+  @media (max-width:900px) {
+    .model-workspace .split-layout { grid-template-columns:1fr; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-wrap p-page-enter">
+
+  <div class="page-eyebrow">
+    <a href="/live-demo" class="page-back">
+      <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+      Back to Demo
+    </a>
+  </div>
+
+  <div class="page-hd">
+    <div class="page-hd-inner">
+      <div class="page-hd-icon page-hd-icon--restricted">
+        <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      </div>
+      <div class="page-hd-info">
+        <h1 class="page-title">Restricted Area Security</h1>
+        <p class="page-desc">
+          Register authorised persons via face photos, then monitor a restricted zone.
+          YOLO detects persons, face encodings are matched against the database,
+          and any unknown individual triggers a timestamped alert.
+        </p>
+        <div class="page-tags">
+          <span class="p-tag p-tag--red">YOLOv8</span>
+          <span class="p-tag p-tag--red">face_recognition</span>
+          <span class="p-tag p-tag--red">MongoDB Alerts</span>
+          <span class="p-tag p-tag--live">&#9679; Live</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Model Workspace -->
+  <div class="model-workspace">
+    <section class="card" style="margin:0;">
+      <div class="card-header">
+        <div class="status-indicator" id="restricted-indicator">READY</div>
+        <h2>Restricted Area Security</h2>
+      </div>
+
+      <div class="card-body">
+
+        <!-- Top Row: Registration + Monitor -->
+        <div class="split-layout" style="margin-bottom:28px;">
+
+          <!-- LEFT: Register Known Person -->
+          <div class="form-side">
+            <h3 style="margin-bottom:12px;color:var(--success);">Register Known Person</h3>
+            <p style="color:#aaa;font-size:.88rem;margin-bottom:14px;line-height:1.5;">
+              Upload at least 3 clear, front-facing photos. Encodings are stored — images are discarded immediately.
+            </p>
+
+            <div class="form-group">
+              <label for="ra-name">Full Name</label>
+              <input type="text" id="ra-name" placeholder="E.g., Alice Johnson" autocomplete="off"/>
+            </div>
+
+            <div class="form-group" style="margin-top:12px;">
+              <label>Photos (3+ recommended)</label>
+              <div class="upload-zone" id="ra-upload-zone" onclick="document.getElementById('ra-file-input').click()" style="min-height:80px;">
+                <div class="icon" style="font-size:1.6rem;">&#x229E;</div>
+                <p style="font-size:.85rem;">Click to select images</p>
+                <input type="file" id="ra-file-input" accept="image/*" multiple hidden onchange="raHandleUpload(this.files)"/>
+                <div class="preview-container" id="ra-preview"></div>
+              </div>
+            </div>
+
+            <button class="btn btn--success" id="ra-register-btn" onclick="raRegisterPerson()" style="width:100%;margin-top:14px;">
+              Register Person
+            </button>
+            <div class="status-box" id="ra-register-status" style="margin-top:12px;">Ready</div>
+          </div>
+
+          <!-- RIGHT: Camera Monitor -->
+          <div class="view-side">
+            <div class="video-container" id="restricted-video-container">
+              <div class="placeholder" id="restricted-placeholder">
+                <div class="icon">&#x26E8;</div>
+                <p>Security Cam Offline</p>
+              </div>
+              <img id="restricted-feed" src="" alt="Restricted Area feed" style="display:none;" />
+            </div>
+
+            <div class="source-selector" style="margin-top:15px;background:rgba(0,0,0,.2);padding:10px;border-radius:8px;">
+              <select id="restricted-source-type" style="width:100%;padding:8px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.2);color:white;border-radius:4px;outline:none;margin-bottom:8px;" onchange="toggleCardCameraInput('restricted')">
+                <option value="webcam" style="color:black;">Webcam</option>
+                <option value="cctv"   style="color:black;">CCTV (Auto)</option>
+              </select>
+              <div id="restricted-cctv-container" style="display:none;margin-bottom:8px;">
+                <div style="padding:9px 12px;background:rgba(14,165,233,.06);border:1px solid rgba(14,165,233,.18);border-radius:6px;display:flex;align-items:center;gap:8px;font-size:.78rem;color:#7dd3fc;">
+                  <span>&#9679;</span> Auto-connecting using stored credentials
+                </div>
+              </div>
+              <div style="display:flex;gap:10px;">
+                <button class="btn btn--primary" id="restricted-start-btn" style="flex:1;">&#x25B6; Start Monitoring</button>
+                <button class="btn btn--danger"  id="restricted-stop-btn"  style="flex:1;display:none;">&#x25FC; Stop Monitoring</button>
+              </div>
+            </div>
+            <div class="status-box" id="restricted-status" style="margin-top:10px;">Security Offline</div>
+          </div>
+
+        </div><!-- /split-layout -->
+
+        <!-- Alert Logs Table -->
+        <div style="margin-top:10px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <h3>Recent Intrusion Alerts</h3>
+            <button class="btn btn--object" onclick="raRefreshAlerts()" style="padding:6px 14px;font-size:.82rem;">&#8635; Refresh</button>
+          </div>
+          <div style="background:rgba(0,0,0,.3);border-radius:10px;border:1px solid rgba(255,255,255,.08);overflow:hidden;">
+            <table style="width:100%;border-collapse:collapse;text-align:left;font-size:.9rem;">
+              <thead style="background:rgba(255,255,255,.04);">
+                <tr>
+                  <th style="padding:10px 16px;border-bottom:1px solid rgba(255,255,255,.08);font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;color:#64748b;">Timestamp</th>
+                  <th style="padding:10px 16px;border-bottom:1px solid rgba(255,255,255,.08);font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;color:#64748b;">Status</th>
+                  <th style="padding:10px 16px;border-bottom:1px solid rgba(255,255,255,.08);font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;color:#64748b;">Snapshot</th>
+                </tr>
+              </thead>
+              <tbody id="alert-logs-body">
+                <tr>
+                  <td colspan="3" style="padding:22px;text-align:center;color:#475569;font-size:.85rem;">No alerts logged yet.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div><!-- /card-body -->
+    </section>
+  </div><!-- /model-workspace -->
+
+</div><!-- /page-wrap -->
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/script.js?v=5"></script>
+{% endblock %}

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}CV Platform{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/platform.css" />
+  {% block extra_css %}{% endblock %}
+</head>
+<body class="platform-body">
+
+  <!-- ── RIGHT SIDEBAR NAVIGATION ─────────────────────────── -->
+  <nav class="sidebar-nav" aria-label="Platform Navigation">
+
+    <div class="sb-header">
+      <div class="sb-logo">
+        <div class="sb-logo-icon">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/></svg>
+        </div>
+        <div>
+          <div class="sb-logo-text">CV Platform</div>
+          <div class="sb-version">v2.0.0</div>
+        </div>
+      </div>
+    </div>
+
+    <ul class="sb-menu">
+      <li class="sb-item" data-page="home">
+        <a href="/" class="sb-link" title="Home">
+          <span class="sb-icon">
+            <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          </span>
+          <span class="sb-label">Home</span>
+        </a>
+      </li>
+      <li class="sb-item" data-page="demo">
+        <div class="sb-link sb-has-sub" style="cursor:pointer;" onclick="this.parentElement.classList.toggle('open')">
+          <span class="sb-icon">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+          </span>
+          <span class="sb-label">Live Demo</span>
+          <span style="margin-left:auto; font-size:0.6rem; opacity:0.6; padding-right:5px;">▼</span>
+        </div>
+        <ul class="sb-sub-menu">
+          <li><a href="/face-recognition" class="sb-sub-link">Face Recognition</a></li>
+          <li><a href="/restricted-area" class="sb-sub-link">Restricted Area</a></li>
+          <li><a href="/object-detection" class="sb-sub-link">Object Detection</a></li>
+          <li><a href="/emotion-detection" class="sb-sub-link">Emotion Detection</a></li>
+        </ul>
+      </li>
+      <li class="sb-item" data-page="report">
+        <a href="/report" class="sb-link" title="Report">
+          <span class="sb-icon">
+            <svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          </span>
+          <span class="sb-label">Report</span>
+        </a>
+      </li>
+      <li class="sb-item" data-page="details">
+        <a href="/details" class="sb-link" title="Details">
+          <span class="sb-icon">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          </span>
+          <span class="sb-label">Details</span>
+        </a>
+      </li>
+      <li class="sb-item" data-page="license">
+        <a href="/license" class="sb-link" title="License">
+          <span class="sb-icon">
+            <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </span>
+          <span class="sb-label">License</span>
+        </a>
+      </li>
+    </ul>
+
+    <div class="sb-footer">
+      <div class="sb-status">
+        <div class="sb-status-dot"></div>
+        <span class="sb-label">System Active</span>
+      </div>
+    </div>
+
+  </nav>
+
+  <!-- ── MAIN CONTENT ──────────────────────────────────────── -->
+  <div class="p-main">
+    {% block content %}{% endblock %}
+  </div>
+
+  <script src="/static/platform.js"></script>
+  {% block extra_scripts %}{% endblock %}
+</body>
+</html>

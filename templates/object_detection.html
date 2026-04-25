@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Object Detection — CV Platform{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="/static/style.css" />
+<style>
+  body.platform-body main { max-width:none !important; margin:0 !important; }
+  .model-workspace .card-body { padding: 28px 32px; }
+  .model-workspace .object-layout {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 28px;
+    align-items: start;
+  }
+  .model-workspace .video-container {
+    aspect-ratio: 16/9;
+    min-height: 360px;
+  }
+  .model-workspace .video-container img { width:100%; height:100%; object-fit:cover; }
+  @media (max-width:900px) {
+    .model-workspace .object-layout { grid-template-columns:1fr; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-wrap p-page-enter">
+
+  <div class="page-eyebrow">
+    <a href="/live-demo" class="page-back">
+      <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+      Back to Demo
+    </a>
+  </div>
+
+  <div class="page-hd">
+    <div class="page-hd-inner">
+      <div class="page-hd-icon page-hd-icon--object">
+        <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      </div>
+      <div class="page-hd-info">
+        <h1 class="page-title">Object Detection</h1>
+        <p class="page-desc">
+          YOLOv8 nano / small model detecting items in your environment.
+          Draws bounding boxes with class labels and confidence scores.
+          Filters to bottles, chairs, watches, and mobile phones.
+        </p>
+        <div class="page-tags">
+          <span class="p-tag p-tag--orange">YOLOv8</span>
+          <span class="p-tag p-tag--orange">Real-time</span>
+          <span class="p-tag p-tag--orange">Bounding Boxes</span>
+          <span class="p-tag p-tag--live">&#9679; Live</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="model-workspace">
+    <section class="card card--object" style="margin:0;">
+      <div class="card-header">
+        <div class="status-indicator" id="object-indicator">READY</div>
+        <h2>Object Detection</h2>
+      </div>
+
+      <div class="card-body">
+        <div class="object-layout">
+
+          <!-- Info Side -->
+          <div class="object-info-side">
+            <p class="object-desc">
+              Real-time object detection powered by YOLOv8. Identifies bottles,
+              chairs, watches, and mobile phones in your environment with bounding
+              boxes and confidence scores every frame.
+            </p>
+
+            <div class="object-labels-grid" style="margin:20px 0;">
+              <span class="object-chip bottle">Bottle</span>
+              <span class="object-chip chair">Chair</span>
+              <span class="object-chip clock">Watch (clock)</span>
+              <span class="object-chip phone">Mobile Phone</span>
+            </div>
+
+            <div class="source-selector" style="margin-top:15px;background:rgba(0,0,0,.2);padding:10px;border-radius:8px;">
+              <select id="object-source-type" style="width:100%;padding:8px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.2);color:white;border-radius:4px;outline:none;margin-bottom:8px;" onchange="toggleCardCameraInput('object')">
+                <option value="webcam" style="color:black;">Webcam</option>
+                <option value="cctv"   style="color:black;">CCTV (Auto)</option>
+              </select>
+              <div id="object-cctv-container" style="display:none;margin-bottom:8px;">
+                <div style="padding:9px 12px;background:rgba(14,165,233,.06);border:1px solid rgba(14,165,233,.18);border-radius:6px;display:flex;align-items:center;gap:8px;font-size:.78rem;color:#7dd3fc;">
+                  <span>&#9679;</span> Auto-connecting using stored credentials
+                </div>
+              </div>
+              <div class="object-controls-wrap" style="display:flex;gap:10px;margin-top:0;">
+                <button class="btn btn--object" id="object-start-btn" style="flex:1;">Start Object Detection</button>
+                <button class="btn btn--danger"  id="object-stop-btn"  style="display:none;flex:1;">Stop</button>
+              </div>
+            </div>
+
+            <div class="status-box" id="object-status">Ready</div>
+          </div>
+
+          <!-- Feed Side -->
+          <div class="view-side">
+            <div class="video-container object-feed-container" id="object-video-container">
+              <div class="placeholder" id="object-placeholder">
+                <div class="icon">◉</div>
+                <p>Object Cam Offline</p>
+              </div>
+              <img id="object-feed" src="" alt="Object detection feed" />
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/script.js?v=5"></script>
+{% endblock %}

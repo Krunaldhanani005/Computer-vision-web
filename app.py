@@ -2,13 +2,17 @@ print("Starting server... loading libraries (this may take a minute)")
 import time
 import threading
 import cv2
+import concurrent.futures
 from flask import Flask, Response, jsonify, render_template, request
 
 # ── AI model imports (new modular structure) ──────────────────────────────────
-from models.face_recognition import train_model, recognize, clear_model, get_faces_dnn, _identity_tracker
+from models.face_recognition import train_model, recognize, clear_model, get_faces_dnn, _identity_tracker, reset_tracking_state
 from models.emotion_detection.emotion_model import predict_emotion, face_cascade, smooth_emotion
 from models.object_detection import detect_objects, draw_detections
 import os
+from urllib.parse import quote as _url_quote
+from dotenv import load_dotenv
+load_dotenv()
 from models.plate_detection.plate_model import generate_plate_frames, stop_video_stream
 
 print("Libraries loaded. Initialising Flask app...")
@@ -21,56 +25,79 @@ os.makedirs(TEMP_FOLDER, exist_ok=True)
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  SHARED CAMERA — one VideoCapture + one background reader thread
+#  SHARED CAMERA — managed by camera_manager
 # ═══════════════════════════════════════════════════════════════════════════════
-_shared_cam      = None
-_shared_cam_lock = threading.Lock()
-_latest_frame    = None
-_cam_running     = False
+from camera_manager import camera_manager
+from zone_manager import zone_manager
+
+camera_source_config = {"type": "webcam", "url": None}
 
 
-def _cam_reader_loop():
-    """Background thread: continuously grabs the newest frame from the webcam."""
-    global _latest_frame, _cam_running
-    while _cam_running:
-        with _shared_cam_lock:
-            if _shared_cam is None or not _shared_cam.isOpened():
+def _build_cctv_url():
+    """Build an authenticated RTSP/HTTP URL from .env credentials.
+    Returns (url, None) on success or (None, error_message) on failure.
+    Credentials are never accepted from or returned to the frontend.
+    """
+    raw_url  = os.getenv("CCTV_URL", "").strip()
+    username = os.getenv("CCTV_USERNAME", "").strip()
+    password = os.getenv("CCTV_PASSWORD", "").strip()
+
+    if not raw_url:
+        return None, "CCTV_URL is not configured in .env"
+
+    if username and password:
+        creds = f"{_url_quote(username, safe='')}:{_url_quote(password, safe='')}"
+        for scheme in ("rtsp://", "http://", "https://"):
+            if raw_url.startswith(scheme):
+                raw_url = f"{scheme}{creds}@{raw_url[len(scheme):]}"
                 break
-            ret, frame = _shared_cam.read()
-        if ret:
-            _latest_frame = frame
-        time.sleep(0.005)   # ~200 fps ceiling — prevents CPU spin
 
+    return raw_url, None
+
+
+def stop_all_models():
+    """Ensure only one model is active at a time by stopping all models."""
+    global is_fr_streaming, is_emotion_streaming, is_object_streaming, is_restricted_streaming
+    is_fr_streaming = False
+    is_emotion_streaming = False
+    is_object_streaming = False
+    is_restricted_streaming = False
+
+def _handle_source_switch(data):
+    """Apply camera source from request data.
+    For CCTV, reads credentials from .env — never from the request.
+    Returns an error string on failure, or None on success.
+    """
+    if not data:
+        return None
+    source_type = data.get("source", "webcam")
+
+    if source_type == "cctv":
+        url, err = _build_cctv_url()
+        if err:
+            return err
+    else:
+        url = None
+
+    if camera_source_config["type"] != source_type or camera_source_config["url"] != url:
+        _close_shared_camera()
+        camera_source_config["type"] = source_type
+        camera_source_config["url"] = url
+
+    return None
 
 def _open_shared_camera():
-    """Open the camera and start the reader thread. Returns True on success."""
-    global _shared_cam, _cam_running, _latest_frame
-    with _shared_cam_lock:
-        if _shared_cam is not None and _shared_cam.isOpened():
-            return True
-        _shared_cam = cv2.VideoCapture(0)
-        _shared_cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        _shared_cam.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
-        _shared_cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        if not _shared_cam.isOpened():
-            _shared_cam = None
-            return False
-    _latest_frame = None
-    _cam_running  = True
-    threading.Thread(target=_cam_reader_loop, daemon=True).start()
-    return True
-
+    """Open the camera using camera_manager."""
+    if camera_manager.is_running():
+        return True
+    if camera_source_config["type"] == "webcam":
+        return camera_manager.open_webcam(0)
+    else:
+        return camera_manager.open_cctv(camera_source_config["url"])
 
 def _close_shared_camera():
     """Stop the reader thread and release the webcam."""
-    global _shared_cam, _cam_running, _latest_frame
-    _cam_running = False
-    time.sleep(0.05)   # let reader thread exit cleanly
-    with _shared_cam_lock:
-        if _shared_cam is not None:
-            _shared_cam.release()
-            _shared_cam = None
-    _latest_frame = None
+    camera_manager.close_camera()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -84,6 +111,11 @@ fr_frame_counter     = 0
 _emotion_frame_counter = 0
 _object_frame_counter  = 0
 restricted_frame_counter = 0
+
+# Async recognition state
+fr_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+fr_future = None
+fr_last_results = []
 
 
 # ── Utility ───────────────────────────────────────────────────────────────────
@@ -109,6 +141,78 @@ def index():
     return render_template("index.html")
 
 
+# ── Platform UI pages ─────────────────────────────────────────────────────────
+@app.route("/live-demo")
+def live_demo():
+    return render_template("live_demo.html")
+
+@app.route("/face-recognition")
+def face_recognition_page():
+    return render_template("face_recognition.html")
+
+@app.route("/emotion-detection")
+def emotion_detection_page():
+    return render_template("emotion_detection.html")
+
+@app.route("/object-detection")
+def object_detection_page():
+    return render_template("object_detection.html")
+
+@app.route("/restricted-area")
+def restricted_area_page():
+    return render_template("restricted_area.html")
+
+@app.route("/report")
+def report_page():
+    return render_template("report.html")
+
+@app.route("/details")
+def details_page():
+    return render_template("details.html")
+
+@app.route("/license")
+def license_page():
+    return render_template("license.html")
+
+@app.route("/set_camera_source", methods=["POST"])
+def set_camera_source():
+    data = request.json
+    source_type = data.get("type", "webcam")
+    url = data.get("url", None)
+    
+    # Switching source must close old camera first
+    _close_shared_camera()
+    
+    camera_source_config["type"] = source_type
+    camera_source_config["url"] = url
+    
+    # Optional: You can choose to automatically open it here, or wait for a model to start
+    # Let's open it to test if it works
+    success = _open_shared_camera()
+    return jsonify({"success": success})
+
+
+@app.route("/save_zone", methods=["POST"])
+def save_zone():
+    global fr_last_results
+    data = request.json
+    zone_data = data.get("zone", None)
+    
+    # Always reset tracking state when zone changes or is cancelled
+    reset_tracking_state()
+    fr_last_results = []
+    
+    if zone_data is None:
+        # Clear the zone
+        zone_manager.clear_zone()
+        print("[DEBUG] zone saved: None (Zone Cleared)")
+        return jsonify({"success": True})
+        
+    success = zone_manager.save_zone(zone_data)
+    print(f"[DEBUG] zone saved: {zone_data}")
+    return jsonify({"success": success})
+
+
 @app.route("/train", methods=["POST"])
 def train():
     name  = request.form.get("name", "").strip()
@@ -130,46 +234,82 @@ def clear_training():
 # ═══════════════════════════════════════════════════════════════════════════════
 #  FACE RECOGNITION STREAM
 # ═══════════════════════════════════════════════════════════════════════════════
+def _fr_async_task(frame, real_zone):
+    """Background task for detection and recognition to avoid blocking the stream."""
+    # We use min_size=30 to skip tiny false positives
+    faces = get_faces_dnn(frame, smooth=False, min_size=30)
+    results = []
+    
+    for (x, y, w, h) in faces:
+        if not zone_manager.is_face_inside_zone((x, y, w, h), real_zone):
+            continue
+            
+        raw_name, p_type = recognize(frame, (x, y, w, h))
+        smooth_name, smooth_type = _identity_tracker.update(x, y, w, h, raw_name, p_type)
+        results.append({
+            "box": (x, y, w, h),
+            "name": smooth_name,
+            "type": smooth_type
+        })
+        
+    _identity_tracker.tick()
+    return results
+
 def generate_fr_frames():
-    """MJPEG generator — DNN face detection + face-recognition overlay."""
-    global is_fr_streaming, fr_frame_counter
+    """MJPEG generator — YOLO face detection + face-recognition overlay."""
+    global is_fr_streaming, fr_future, fr_last_results
+    
     while is_fr_streaming:
-        frame = _latest_frame
+        frame = camera_manager.get_latest_frame()
         if frame is None:
             time.sleep(0.01)
             continue
         frame = frame.copy()
 
-        fr_frame_counter += 1
-        if fr_frame_counter % 2 != 0:   # process every 2nd frame for smooth FPS
-            time.sleep(0.01)
+        zone = zone_manager.load_zone()
+        if zone is None:
+            # Without zone: system must not process faces. Raw stream only.
+            _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
             continue
 
-        scale       = 1.5
-        search_frame = cv2.resize(frame, (0, 0), fx=scale, fy=scale)
-        faces       = get_faces_dnn(search_frame, smooth=True)
+        fh, fw = frame.shape[:2]
+        zx = int(zone['x'] * fw)
+        zy = int(zone['y'] * fh)
+        zw = int(zone['w'] * fw)
+        zh = int(zone['h'] * fh)
+        real_zone = {'x': zx, 'y': zy, 'w': zw, 'h': zh}
 
-        for (x, y, w, h) in faces:
-            ox = int(x / scale);  oy = int(y / scale)
-            ow = int(w / scale);  oh = int(h / scale)
+        # Submit background task if idle
+        if fr_future is None or fr_future.done():
+            if fr_future is not None:
+                try:
+                    fr_last_results = fr_future.result()
+                except Exception as e:
+                    print(f"[fr_async_task] Error: {e}")
+            fr_future = fr_executor.submit(_fr_async_task, frame.copy(), real_zone)
 
-            raw_name, p_type = recognize(frame, (ox, oy, ow, oh))
-            smooth_name, smooth_type = _identity_tracker.update(ox, oy, ow, oh, raw_name, p_type)
+        # Draw the zone boundary
+        cv2.rectangle(frame, (zx, zy), (zx + zw, zy + zh), (255, 255, 0), 2)
+        cv2.putText(frame, "Monitoring Zone", (zx, zy - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+
+        # Draw latest available results
+        for res in fr_last_results:
+            ox, oy, ow, oh = res["box"]
+            smooth_name = res["name"]
+            smooth_type = res["type"]
             
             if smooth_name != "Unknown":
                 if smooth_type == "blacklist":
-                    color = (0, 0, 255) # Red for blacklist
+                    color = (0, 0, 255) # Red
                     smooth_name = f"ALERT: {smooth_name}"
                 else:
-                    color = (0, 255, 0) # Green for known
+                    color = (0, 255, 0) # Green
             else:
-                color = (0, 165, 255) # Orange for unknown
+                color = (0, 165, 255) # Orange
 
             cv2.rectangle(frame, (ox, oy), (ox + ow, oy + oh), color, 2)
-            cv2.putText(frame, smooth_name, (ox, oy - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-
-        _identity_tracker.tick()
+            cv2.putText(frame, smooth_name, (ox, oy - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
         _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
         yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
@@ -184,13 +324,18 @@ def fr_video_feed():
 @app.route("/start_fr_camera", methods=["POST"])
 def start_fr_camera():
     global is_fr_streaming
-    
-    # Reload encodings when camera starts (per user requirement)
+
+    stop_all_models()
+
+    err = _handle_source_switch(request.json)
+    if err:
+        return jsonify({"success": False, "message": err}), 400
+
     from models.face_recognition.face_recognition_model import load_encodings_from_db
     load_encodings_from_db()
-    
+
     if not _open_shared_camera():
-        return jsonify({"success": False, "message": "Cannot open webcam."}), 500
+        return jsonify({"success": False, "message": "Cannot open camera."}), 500
     is_fr_streaming = True
     return jsonify({"success": True})
 
@@ -211,7 +356,7 @@ def generate_emotion_frames():
     global is_emotion_streaming, _emotion_frame_counter
 
     while is_emotion_streaming:
-        frame = _latest_frame
+        frame = camera_manager.get_latest_frame()
         if frame is None:
             time.sleep(0.01)
             continue
@@ -258,8 +403,15 @@ def start_emotion():
 @app.route("/start_emotion_camera", methods=["POST"])
 def start_emotion_camera():
     global is_emotion_streaming
+
+    stop_all_models()
+
+    err = _handle_source_switch(request.json)
+    if err:
+        return jsonify({"success": False, "message": err}), 400
+
     if not _open_shared_camera():
-        return jsonify({"success": False, "message": "Cannot open webcam."}), 500
+        return jsonify({"success": False, "message": "Cannot open camera."}), 500
     is_emotion_streaming = True
     return jsonify({"success": True})
 
@@ -278,7 +430,7 @@ def generate_object_frames():
     """MJPEG generator — YOLOv8 object detection overlay (filtered classes only)."""
     global is_object_streaming, _object_frame_counter
     while is_object_streaming:
-        frame = _latest_frame
+        frame = camera_manager.get_latest_frame()
         if frame is None:
             time.sleep(0.01)
             continue
@@ -305,8 +457,15 @@ def start_object_detection():
 @app.route("/start_object_camera", methods=["POST"])
 def start_object_camera():
     global is_object_streaming
+
+    stop_all_models()
+
+    err = _handle_source_switch(request.json)
+    if err:
+        return jsonify({"success": False, "message": err}), 400
+
     if not _open_shared_camera():
-        return jsonify({"success": False, "message": "Cannot open webcam."}), 500
+        return jsonify({"success": False, "message": "Cannot open camera."}), 500
     is_object_streaming = True
     return jsonify({"success": True})
 
@@ -328,7 +487,7 @@ def generate_restricted_frames():
     from models.restricted_area import process_frame
 
     while is_restricted_streaming:
-        frame = _latest_frame
+        frame = camera_manager.get_latest_frame()
         if frame is None:
             time.sleep(0.01)
             continue
@@ -352,12 +511,18 @@ def restricted_video_feed():
 @app.route("/start_restricted_camera", methods=["POST"])
 def start_restricted_camera():
     global is_restricted_streaming
-    # Load fresh known-person encodings from MongoDB into RAM cache
+
+    stop_all_models()
+
+    err = _handle_source_switch(request.json)
+    if err:
+        return jsonify({"success": False, "message": err}), 400
+
     from models.restricted_area import load_known_persons
     load_known_persons()
 
     if not _open_shared_camera():
-        return jsonify({"success": False, "message": "Cannot open webcam."}), 500
+        return jsonify({"success": False, "message": "Cannot open camera."}), 500
     is_restricted_streaming = True
     return jsonify({"success": True})
 

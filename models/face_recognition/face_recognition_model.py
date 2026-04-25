@@ -54,6 +54,8 @@ def _log_detection_async(name, person_type):
                 "type": person_type,
                 "timestamp": datetime.datetime.utcnow()
             })
+            print("[DEBUG] image captured")
+            print("[DEBUG] database saved")
         except Exception as e:
             print(f"[face_recognition] Error logging detection: {e}")
     Thread(target=worker, daemon=True).start()
@@ -106,9 +108,20 @@ def clear_model():
     known_encodings.clear()
     known_names.clear()
     known_types.clear()
-    _identity_tracker.reset()
+    reset_tracking_state()
     # Optionally reload from DB again to restore state
     load_encodings_from_db()
+
+def reset_tracking_state():
+    """Clear tracker memory and logging cooldowns so new zones start perfectly fresh."""
+    global last_logged
+    last_logged.clear()
+    _identity_tracker.reset()
+    try:
+        from .face_detector import clear_detector_state
+        clear_detector_state()
+    except Exception as e:
+        print(f"[DEBUG] Error clearing detector state: {e}")
 
 def recognize(frame, face_box):
     """
@@ -130,6 +143,7 @@ def recognize(frame, face_box):
             conf = int((1 - distances[best]) * 100)
             matched_name = known_names[best]
             matched_type = known_types[best]
+            print(f"[DEBUG] recognition result: {matched_name} ({conf}%)")
             
             # Logging logic
             now = datetime.datetime.now()

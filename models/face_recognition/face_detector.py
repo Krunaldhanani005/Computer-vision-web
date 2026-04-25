@@ -1,16 +1,20 @@
 import cv2
 import numpy as np
 import os
+try:
+    from ultralytics import YOLO
+except ImportError:
+    YOLO = None
 
 _BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
-_PROTOTXT   = os.path.join(_BASE_DIR, "deploy.prototxt")
-_MODEL_FILE = os.path.join(_BASE_DIR, "res10_300x300_ssd_iter_140000.caffemodel")
+_MODEL_FILE = os.path.join(_BASE_DIR, "yolov8n-face.pt")
 
-_net = None
-if os.path.exists(_PROTOTXT) and os.path.exists(_MODEL_FILE):
-    _net = cv2.dnn.readNetFromCaffe(_PROTOTXT, _MODEL_FILE)
+_yolo_model = None
+if YOLO and os.path.exists(_MODEL_FILE):
+    _yolo_model = YOLO(_MODEL_FILE)
+    print("[face_detector] Loaded YOLOv8 face detector.")
 else:
-    print("[face_detector] WARNING: DNN model files not found. Face detection will fail.")
+    print("[face_detector] WARNING: YOLOv8 face model not found or ultralytics not installed.")
 
 _prev_boxes     = []
 _BOX_ALPHA      = 0.8
@@ -29,34 +33,30 @@ def _compute_iou(boxA, boxB):
 
 def get_faces_dnn(frame, smooth=True, min_size=20):
     """
-    Detect faces in *frame* using the Caffe SSD network.
+    Detect faces in *frame* using YOLOv8-face network.
 
     Returns a list of (x, y, w, h) tuples.
     If smooth=True, applies EMA tracking against _prev_boxes for stable boxes.
     """
     global _prev_boxes
 
-    if _net is None:
+    if _yolo_model is None:
         return _prev_boxes if smooth else []
 
     h, w = frame.shape[:2]
-    blob = cv2.dnn.blobFromImage(
-        frame, 1.0, (300, 300), (104.0, 177.0, 123.0), swapRB=False, crop=False
-    )
-    _net.setInput(blob)
-    detections = _net.forward()
-
+    results = _yolo_model.predict(frame, conf=_CONF_THRESHOLD, verbose=False)
+    
     current_faces = []
-    for i in range(detections.shape[2]):
-        confidence = detections[0, 0, i, 2]
-        if confidence > _CONF_THRESHOLD:
-            box        = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
-            sX, sY, eX, eY = box.astype("int")
-            sX, sY     = max(0, sX), max(0, sY)
-            eX, eY     = min(w, eX), min(h, eY)
-            fw, fh     = eX - sX, eY - sY
-            if fw >= min_size and fh >= min_size:
-                current_faces.append((sX, sY, fw, fh))
+    if len(results) > 0:
+        boxes = results[0].boxes
+        if boxes is not None and len(boxes) > 0:
+            for box in boxes.xyxy:
+                sX, sY, eX, eY = [int(v) for v in box.tolist()]
+                sX, sY = max(0, sX), max(0, sY)
+                eX, eY = min(w, eX), min(h, eY)
+                fw, fh = eX - sX, eY - sY
+                if fw >= min_size and fh >= min_size:
+                    current_faces.append((sX, sY, fw, fh))
 
     if not smooth:
         return current_faces
