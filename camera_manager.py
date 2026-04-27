@@ -1,79 +1,184 @@
+"""
+camera_manager.py  — Production-grade shared camera manager
+
+Features:
+    - Single background reader thread shared across all model streams
+    - Bounded frame buffer (drops stale frames to prevent backlog)
+    - RTSP low-latency optimisation (CAP_PROP_BUFFERSIZE = 1)
+    - Automatic reconnect on RTSP failure (up to MAX_RECONNECT_ATTEMPTS)
+    - Webcam and CCTV (RTSP/HTTP) support
+"""
+
 import cv2
 import threading
 import time
 
+
+# Reconnect settings for CCTV/RTSP streams
+MAX_RECONNECT_ATTEMPTS = 10      # total retries before giving up
+RECONNECT_DELAY_SEC    = 3.0     # wait between retries
+
+
 class CameraManager:
     def __init__(self):
-        self._cam = None
-        self._cam_lock = threading.Lock()
-        self._latest_frame = None
-        self._running = False
-        self._thread = None
-        self._current_source = None
+        self._cam              = None
+        self._cam_lock         = threading.Lock()
+        self._latest_frame     = None
+        self._frame_lock       = threading.Lock()   # separate lock for frame
+        self._running          = False
+        self._thread           = None
+        self._current_source   = None
+        self._is_rtsp          = False              # True when source is a URL
+
+    # ── Internal reader loop ──────────────────────────────────────────────────
 
     def _reader_loop(self):
+        """
+        Background thread: continuously reads frames and stores the latest.
+        For RTSP streams, attempts automatic reconnection on failure.
+        """
+        consecutive_failures = 0
+
         while self._running:
+            # ── Grab frame ───────────────────────────────────────────────────
             with self._cam_lock:
                 if self._cam is None or not self._cam.isOpened():
-                    break
-                ret, frame = self._cam.read()
-            if ret:
-                self._latest_frame = frame
-            else:
-                # If we lose connection to RTSP or video ends, we might want to handle it.
-                # For now, just continue or sleep
-                time.sleep(0.01)
-                continue
-            time.sleep(0.005) # ~200 fps ceiling
+                    ret, frame = False, None
+                else:
+                    ret, frame = self._cam.read()
 
-    def _open_camera(self, source):
-        # Close existing camera if different source or just to be safe
-        self.close_camera()
+            if ret and frame is not None:
+                consecutive_failures = 0
+                with self._frame_lock:
+                    self._latest_frame = frame
+                # Minimal sleep — let CPU breathe without capping FPS too hard
+                time.sleep(0.005)
+            else:
+                consecutive_failures += 1
+
+                if not self._is_rtsp:
+                    # Webcam EOF / device error → stop
+                    print("[camera_manager] Webcam read failure — stopping.")
+                    break
+
+                # RTSP: attempt reconnect
+                print(f"[camera_manager] RTSP read failure #{consecutive_failures} — reconnecting in {RECONNECT_DELAY_SEC}s …")
+                time.sleep(RECONNECT_DELAY_SEC)
+
+                if consecutive_failures >= MAX_RECONNECT_ATTEMPTS:
+                    print(f"[camera_manager] Max reconnect attempts ({MAX_RECONNECT_ATTEMPTS}) reached — stopping.")
+                    break
+
+                with self._cam_lock:
+                    if self._cam is not None:
+                        self._cam.release()
+                    self._cam = self._open_capture(self._current_source)
+                    if self._cam and self._cam.isOpened():
+                        print("[camera_manager] RTSP reconnected ✓")
+                        consecutive_failures = 0
+                    else:
+                        print("[camera_manager] RTSP reconnect failed, retrying…")
+
+        self._running = False
+        print("[camera_manager] Reader thread exited.")
+
+    # ── Capture factory ───────────────────────────────────────────────────────
+
+    def _open_capture(self, source) -> cv2.VideoCapture:
+        """
+        Open a VideoCapture with source-appropriate settings.
+        Returns a VideoCapture object (may not be opened on failure).
+        """
+        cap = cv2.VideoCapture(source)
+
+        if isinstance(source, int) or (isinstance(source, str) and source.isdigit()):
+            # Webcam — request moderate resolution and minimal buffer
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_FPS, 30)
+        else:
+            # RTSP / HTTP stream — minimise internal buffer for low latency
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            # Use FFMPEG backend for better RTSP support (if available)
+            # cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'H264'))
+
+        return cap
+
+    # ── Public open / close API ───────────────────────────────────────────────
+
+    def _open_camera(self, source) -> bool:
+        """Open camera source and start reader thread."""
+        self.close_camera()  # Clean up any existing capture first
+
+        cap = self._open_capture(source)
+        if not cap.isOpened():
+            print(f"[camera_manager] Failed to open source: {source}")
+            cap.release()
+            return False
 
         with self._cam_lock:
-            self._cam = cv2.VideoCapture(source)
-            # Apply settings only for webcam (int) to avoid issues with RTSP streams
-            if isinstance(source, int) or (isinstance(source, str) and source.isdigit()):
-                self._cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                self._cam.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                self._cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-
-            if not self._cam.isOpened():
-                self._cam = None
-                return False
+            self._cam = cap
 
         self._current_source = source
-        self._latest_frame = None
-        self._running = True
-        self._thread = threading.Thread(target=self._reader_loop, daemon=True)
+        self._is_rtsp        = not (isinstance(source, int) or
+                                    (isinstance(source, str) and source.isdigit()))
+        self._latest_frame   = None
+        self._running        = True
+        self._thread         = threading.Thread(
+            target=self._reader_loop, daemon=True, name="CamReader"
+        )
         self._thread.start()
-        return True
 
-    def open_webcam(self, index=0):
+        # Wait up to 2 s for first frame (ensures camera is actually producing)
+        deadline = time.time() + 2.0
+        while time.time() < deadline:
+            with self._frame_lock:
+                if self._latest_frame is not None:
+                    print(f"[camera_manager] Camera ready ✓ source={source!r}")
+                    return True
+            time.sleep(0.05)
+
+        print(f"[camera_manager] Camera opened but no frame received within 2 s: {source!r}")
+        return True   # Return True anyway; stream may warm up shortly
+
+    def open_webcam(self, index: int = 0) -> bool:
         return self._open_camera(index)
 
-    def open_cctv(self, url):
+    def open_cctv(self, url: str) -> bool:
         return self._open_camera(url)
 
     def close_camera(self):
+        """Stop reader thread and release capture."""
         self._running = False
+
         if self._thread is not None:
-            self._thread.join(timeout=1.0)
+            self._thread.join(timeout=2.0)
             self._thread = None
-        
+
         with self._cam_lock:
             if self._cam is not None:
                 self._cam.release()
                 self._cam = None
-        
-        self._latest_frame = None
+
+        with self._frame_lock:
+            self._latest_frame = None
+
         self._current_source = None
+        self._is_rtsp        = False
+
+    # ── Frame access ──────────────────────────────────────────────────────────
 
     def get_latest_frame(self):
-        return self._latest_frame
+        """Return the most recent frame (or None). Always a copy to avoid races."""
+        with self._frame_lock:
+            if self._latest_frame is None:
+                return None
+            return self._latest_frame.copy()
 
-    def is_running(self):
+    def is_running(self) -> bool:
         return self._running
 
-# Global singleton instance
+
+# Global singleton
 camera_manager = CameraManager()

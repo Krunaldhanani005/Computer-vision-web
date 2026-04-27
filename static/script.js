@@ -177,9 +177,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (startBtn) startBtn.style.display = 'flex';
         if (stopBtn) stopBtn.style.display = 'none';
         const zoneControls = document.getElementById('fr-zone-controls');
-        const zoneCanvas = document.getElementById('fr-zone-canvas');
+        const zoneCanvas   = document.getElementById('fr-zone-canvas');
+        const zoneInstr    = document.getElementById('zone-instructions');
         if (zoneControls) zoneControls.style.display = 'none';
-        if (zoneCanvas) zoneCanvas.style.display = 'none';
+        if (zoneCanvas) {
+            zoneCanvas.style.display = 'none';
+            const ctx = zoneCanvas.getContext('2d');
+            if (ctx) ctx.clearRect(0, 0, zoneCanvas.width, zoneCanvas.height);
+        }
+        if (zoneInstr) zoneInstr.style.display = 'none';
         setStatus('Ready');
     }
 
@@ -294,19 +300,21 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (stopBtn) stopBtn.style.display = 'flex';
                     
                     const zoneControls = document.getElementById('fr-zone-controls');
-                    const zoneCanvas = document.getElementById('fr-zone-canvas');
+                    const zoneCanvas   = document.getElementById('fr-zone-canvas');
+                    const zoneInstr    = document.getElementById('zone-instructions');
                     if (zoneControls) zoneControls.style.display = 'flex';
+                    if (zoneInstr)    zoneInstr.style.display = 'block';
                     if (zoneCanvas) {
                         zoneCanvas.style.display = 'block';
-                        // Wait a tiny bit for display block to register layout for correct canvas size
+                        // Let layout reflow before syncing canvas resolution
                         setTimeout(() => {
                             if (typeof window.startDrawingZone === 'function') {
                                 window.startDrawingZone('fr');
                             }
-                        }, 100);
+                        }, 120);
                     }
 
-                    setStatus('Camera Active. Draw zone to begin recognition.', 'success');
+                    setStatus('Camera Active. Click video to draw polygon zone.', 'success');
                 } else {
                     setStatus(result.message, 'error');
                 }
@@ -596,7 +604,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // ── Camera Source Logic ───────────────────────────────────────────────────
     // ── Camera Source UI Toggle ──────────────────────────────────────────────
     window.toggleCardCameraInput = function(prefix) {
         const typeSelect = document.getElementById(`${prefix}-source-type`);
@@ -606,127 +613,20 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    // ── Zone Drawing Logic ───────────────────────────────────────────────────
-    let isDrawing = false;
-    let startX, startY;
-    let currentZone = null;
-
-    window.startDrawingZone = function(prefix) {
-        const canvas = document.getElementById(`${prefix}-zone-canvas`);
-        if (!canvas) return;
-        const ctx = canvas.getContext('2d');
-        canvas.width = canvas.offsetWidth;
-        canvas.height = canvas.offsetHeight;
-        
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        currentZone = null;
-
-        canvas.onmousedown = (e) => {
-            isDrawing = true;
-            
-            // Sync internal resolution with actual display size just before drawing
-            if (canvas.width !== canvas.offsetWidth || canvas.height !== canvas.offsetHeight) {
-                canvas.width = canvas.offsetWidth;
-                canvas.height = canvas.offsetHeight;
-            }
-            
-            const rect = canvas.getBoundingClientRect();
-            startX = e.clientX - rect.left;
-            startY = e.clientY - rect.top;
-
-            // Clear previous zone drawing to prevent ghost visuals
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-        };
-
-        canvas.onmousemove = (e) => {
-            if (!isDrawing) return;
-            const rect = canvas.getBoundingClientRect();
-            const currentX = e.clientX - rect.left;
-            const currentY = e.clientY - rect.top;
-
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.strokeStyle = '#ffff00';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(startX, startY, currentX - startX, currentY - startY);
-        };
-
-        canvas.onmouseup = (e) => {
-            if (!isDrawing) return;
-            isDrawing = false;
-            const rect = canvas.getBoundingClientRect();
-            const currentX = e.clientX - rect.left;
-            const currentY = e.clientY - rect.top;
-
-            // Normalized coordinates (0.0 to 1.0) using actual screen rectangle
-            const x_percent = Math.min(startX, currentX) / rect.width;
-            const y_percent = Math.min(startY, currentY) / rect.height;
-            const w_percent = Math.abs(currentX - startX) / rect.width;
-            const h_percent = Math.abs(currentY - startY) / rect.height;
-
-            // Prevent accidental clicks (w or h == 0) from registering as a valid zone
-            if (w_percent > 0.01 && h_percent > 0.01) {
-                currentZone = {
-                    x: x_percent,
-                    y: y_percent,
-                    w: w_percent,
-                    h: h_percent
-                };
-                console.log("[DEBUG] Drawn Normalized Zone:", currentZone);
-            } else {
-                currentZone = null;
-                ctx.clearRect(0, 0, canvas.width, canvas.height); // clear the dot/tiny line
-            }
-        };
-    };
-
-    window.saveZone = async function(prefix) {
-        if (!currentZone) {
-            alert('Please draw a zone on the video feed first.');
-            return;
-        }
-        
-        try {
-            const resp = await fetch('/save_zone', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ zone: currentZone })
-            });
-            const result = await resp.json();
-            if (result.success) {
-                const canvas = document.getElementById(`${prefix}-zone-canvas`);
-                if (canvas) {
-                    const ctx = canvas.getContext('2d');
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                }
-                if (prefix === 'fr') setStatus('Zone saved. Recognition active.', 'success');
-            } else {
-                alert('Failed to save zone.');
-            }
-        } catch (err) {
-            alert('Error saving zone.');
-        }
-    };
-
-    window.clearZone = async function(prefix) {
-        try {
-            const resp = await fetch('/save_zone', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ zone: null })
-            });
-            const result = await resp.json();
-            if (result.success) {
-                currentZone = null;
-                const canvas = document.getElementById(`${prefix}-zone-canvas`);
-                if (canvas) {
-                    const ctx = canvas.getContext('2d');
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                }
-                if (prefix === 'fr') setStatus('Zone cancelled. Camera active. Draw zone to begin recognition.', 'info');
-            }
-        } catch (err) {
-            alert('Error clearing zone.');
-        }
-    };
+    // ── Zone Drawing Stubs ───────────────────────────────────────────────────
+    // Polygon zone drawing is handled by the page-level script in face_recognition.html.
+    // These stubs prevent errors on pages that don't include the polygon engine.
+    if (typeof window.startDrawingZone === 'undefined') {
+        window.startDrawingZone = function(prefix) {};
+    }
+    if (typeof window.saveZone === 'undefined') {
+        window.saveZone = async function(prefix) {};
+    }
+    if (typeof window.clearZone === 'undefined') {
+        window.clearZone = async function(prefix) {};
+    }
+    if (typeof window.undoLastPoint === 'undefined') {
+        window.undoLastPoint = function(prefix) {};
+    }
 
 });

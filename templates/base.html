@@ -52,12 +52,17 @@
         </ul>
       </li>
       <li class="sb-item" data-page="report">
-        <a href="/report" class="sb-link" title="Report">
+        <div class="sb-link sb-has-sub" style="cursor:pointer;" onclick="this.parentElement.classList.toggle('open')">
           <span class="sb-icon">
             <svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
           </span>
-          <span class="sb-label">Report</span>
-        </a>
+          <span class="sb-label">Reports</span>
+          <span style="margin-left:auto;font-size:0.6rem;opacity:0.6;padding-right:5px;">▼</span>
+        </div>
+        <ul class="sb-sub-menu">
+          <li><a href="/report"     class="sb-sub-link">Detection Report</a></li>
+          <li><a href="/fr-report"  class="sb-sub-link">&#9685; FR Dashboard</a></li>
+        </ul>
       </li>
       <li class="sb-item" data-page="details">
         <a href="/details" class="sb-link" title="Details">
