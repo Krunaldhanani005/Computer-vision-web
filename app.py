@@ -8,7 +8,7 @@ from flask import Flask, Response, jsonify, render_template, request, send_from_
 
 # ── AI model imports (modular structure) ──────────────────────────────────────
 from models.face_recognition import (
-    train_model, recognize, clear_model, get_faces_dnn,
+    train_model, recognize, clear_model,
     _identity_tracker, reset_tracking_state, load_encodings_from_db
 )
 from models.emotion_detection.emotion_model import predict_emotion, face_cascade, smooth_emotion
@@ -36,9 +36,13 @@ MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
 #  SHARED CAMERA — managed by camera_manager
 # ═══════════════════════════════════════════════════════════════════════════════
 from camera_manager import camera_manager
+from ra_camera_manager import ra_camera_manager
 from zone_manager import zone_manager
 
 camera_source_config = {"type": "webcam", "url": None}
+
+# Hardcoded RA CCTV stream (@ in password URL-encoded as %40)
+_RA_CCTV_URL = "rtsp://Test:Nanta%40123@192.168.29.118:554/1/1?transmode=unicast&profile=vam"
 
 
 def _build_cctv_url():
@@ -76,9 +80,14 @@ def _handle_source_switch(data):
     source_type = data.get("source", "webcam")
 
     if source_type == "cctv":
-        url, err = _build_cctv_url()
-        if err:
-            return err
+        # Accept direct URL from request (rtsp://, http://, https://)
+        direct_url = (data.get("url") or "").strip()
+        if direct_url:
+            url = direct_url
+        else:
+            url, err = _build_cctv_url()
+            if err:
+                return err
     else:
         url = None
 
@@ -119,6 +128,10 @@ restricted_frame_counter = 0
 fr_executor    = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 fr_future      = None
 fr_last_results: list = []
+
+ra_executor    = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+ra_future      = None
+ra_last_results: list = []
 
 
 # ── Utility ───────────────────────────────────────────────────────────────────
@@ -206,7 +219,7 @@ def serve_report_snapshot(filename):
 
 @app.route("/api/report/known")
 def api_report_known():
-    from models.face_recognition.fr_reports_db import get_known_dashboard
+    from models.face_recognition.fr_database import get_known_dashboard
     search   = request.args.get("search", "").strip()
     sort_by  = request.args.get("sort", "last_seen")
     page     = int(request.args.get("page", 1))
@@ -217,13 +230,13 @@ def api_report_known():
 
 @app.route("/api/report/known/stats")
 def api_report_known_stats():
-    from models.face_recognition.fr_reports_db import get_known_stats
+    from models.face_recognition.fr_database import get_known_stats
     return jsonify(get_known_stats())
 
 
 @app.route("/api/report/unknown")
 def api_report_unknown():
-    from models.face_recognition.fr_reports_db import get_unknown_dashboard
+    from models.face_recognition.fr_database import get_unknown_dashboard
     search   = request.args.get("search", "").strip()
     sort_by  = request.args.get("sort", "last_seen")
     page     = int(request.args.get("page", 1))
@@ -233,11 +246,9 @@ def api_report_unknown():
 
 @app.route("/api/report/unknown/delete_all", methods=["POST"])
 def api_report_unknown_delete_all():
-    from models.face_recognition.fr_reports_db import delete_all_unknown_reports
     from models.face_recognition.fr_database import delete_all_unknown_logs
-    success1 = delete_all_unknown_reports()
-    success2 = delete_all_unknown_logs()
-    if success1 or success2:
+    success = delete_all_unknown_logs()
+    if success:
         return jsonify({"success": True})
     return jsonify({"success": False, "error": "Failed to delete reports"}), 500
 
@@ -245,13 +256,13 @@ def api_report_unknown_delete_all():
 
 @app.route("/api/report/unknown/stats")
 def api_report_unknown_stats():
-    from models.face_recognition.fr_reports_db import get_unknown_stats
+    from models.face_recognition.fr_database import get_unknown_stats
     return jsonify(get_unknown_stats())
 
 
 @app.route("/api/report/blacklist")
 def api_report_blacklist():
-    from models.face_recognition.fr_reports_db import get_blacklist_dashboard
+    from models.face_recognition.fr_database import get_blacklist_dashboard
     search      = request.args.get("search", "").strip()
     date_filter = request.args.get("date", "").strip()
     page        = int(request.args.get("page", 1))
@@ -262,13 +273,13 @@ def api_report_blacklist():
 
 @app.route("/api/report/blacklist/stats")
 def api_report_blacklist_stats():
-    from models.face_recognition.fr_reports_db import get_blacklist_stats
+    from models.face_recognition.fr_database import get_blacklist_stats
     return jsonify(get_blacklist_stats())
 
 
 @app.route("/api/report/export/known")
 def api_export_known():
-    from models.face_recognition.fr_reports_db import export_known_csv
+    from models.face_recognition.fr_database import export_known_csv
     from flask import make_response
     csv_data = export_known_csv()
     resp = make_response(csv_data)
@@ -279,13 +290,68 @@ def api_export_known():
 
 @app.route("/api/report/export/blacklist")
 def api_export_blacklist():
-    from models.face_recognition.fr_reports_db import export_blacklist_csv
+    from models.face_recognition.fr_database import export_blacklist_csv
     from flask import make_response
     csv_data = export_blacklist_csv()
     resp = make_response(csv_data)
     resp.headers["Content-Type"] = "text/csv"
     resp.headers["Content-Disposition"] = "attachment; filename=blacklist_alerts_report.csv"
     return resp
+
+@app.route("/ra-report")
+def ra_report_page():
+    return render_template("ra_report.html")
+
+@app.route("/api/ra/stats")
+def api_ra_stats():
+    from models.restricted_area.database import get_ra_stats
+    return jsonify(get_ra_stats())
+
+@app.route("/api/report/restricted_area")
+def api_report_restricted_area():
+    from models.restricted_area.database import get_restricted_dashboard
+    search      = request.args.get("search", "").strip()
+    date_filter = request.args.get("date", "").strip()
+    page        = int(request.args.get("page", 1))
+    per_page    = int(request.args.get("per_page", 50))
+    docs, total = get_restricted_dashboard(search, date_filter, page, per_page)
+    return jsonify({"data": docs, "total": total, "page": page, "per_page": per_page})
+
+@app.route("/api/report/export/restricted_area")
+def api_export_restricted_area():
+    from models.restricted_area.database import export_restricted_csv
+    from flask import make_response
+    csv_data = export_restricted_csv()
+    resp = make_response(csv_data)
+    resp.headers["Content-Type"] = "text/csv"
+    resp.headers["Content-Disposition"] = "attachment; filename=restricted_area_report.csv"
+    return resp
+
+# ── RA Zone Routes (separate from FR zones) ──────────────────────────────────
+@app.route("/ra/save_zone", methods=["POST"])
+def ra_save_zone():
+    from models.restricted_area.database import save_ra_zone, clear_ra_zone
+    global ra_last_results
+    data = request.json
+    zone_data = data.get("zone", None)
+    
+    # Clear active detections on zone change
+    ra_last_results = []
+    
+    if zone_data is None:
+        clear_ra_zone("restricted_default")
+        return jsonify({"success": True})
+    if isinstance(zone_data, list):
+        ok = save_ra_zone(zone_data, "restricted_default")
+        print(f"[ra_zone] Saved {len(zone_data)} pts → {ok}")
+        return jsonify({"success": ok})
+    return jsonify({"success": False, "error": "Invalid zone format"}), 400
+
+@app.route("/ra/get_zone", methods=["GET"])
+def ra_get_zone():
+    from models.restricted_area.database import load_ra_zone
+    pts = load_ra_zone("restricted_default")
+    return jsonify({"zone": pts})
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  POLYGON ZONE ROUTES
@@ -372,94 +438,93 @@ def api_alerts():
 #  FACE RECOGNITION STREAM  (polygon zone-aware)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _fr_async_task(small_frame: np.ndarray, orig_frame: np.ndarray,
-                    frame_w: int, frame_h: int):
+def _fr_async_task(orig_frame: np.ndarray, frame_w: int, frame_h: int):
     """
     Background recognition task.
+    Pipeline: detect → quality gate → align → normalize → embed → match
 
-    small_frame : 640-px downscaled copy  (YOLO person detection — fast)
-    orig_frame  : full-resolution copy    (face detection + recognition — quality)
-    frame_w/h   : orig_frame dimensions
+    Quality gates (all must pass before recognition):
+      1. Detection confidence >= 0.42  (allows medium-far faces)
+      2. Face size >= 50x50 px         (allows far faces ~50px)
+      3. Valid 5-point landmarks        (strongest non-face filter)
+      4. Face aspect ratio 0.4 – 2.2   (wider range for side angles)
+      5. Sharpness (Laplacian) >= 12   (far faces are naturally less sharp)
     """
-    global _fr_debug_persons
-    from models.restricted_area.detector import get_persons
     from models.face_recognition.face_detector import detect_faces_multiscale
 
-    small_h, small_w = small_frame.shape[:2]
-    sx = frame_w / small_w   # x scale: small → original
-    sy = frame_h / small_h   # y scale: small → original
+    results = []
 
-    # ── Step 1: YOLO person detection on fast small frame ──────────────────────
-    persons_small = get_persons(small_frame)
-    debug_persons = []
-    results       = []
+    # ── Step 1: Multi-scale face detection ──────────────────────────────────
+    face_boxes = detect_faces_multiscale(orig_frame, min_size=50)
 
-    for (px1, py1, px2, py2) in persons_small:
-        # Scale person box to ORIGINAL frame coordinates
-        op1 = int(px1 * sx);  oy1 = int(py1 * sy)
-        op2 = int(px2 * sx);  oy2 = int(py2 * sy)
-        pw  = op2 - op1;      ph  = oy2 - oy1
-
-        # ── Person-center zone check ─────────────────────────────────────────
-        if not zone_manager.is_face_inside_normalised((op1, oy1, pw, ph), frame_w, frame_h):
+    for face_data in face_boxes:
+        if len(face_data) < 5:
             continue
 
-        debug_persons.append((op1, oy1, op2, oy2))
+        x, y, w, h = face_data[0], face_data[1], face_data[2], face_data[3]
+        landmarks  = face_data[4]
+        det_conf   = float(face_data[5]) if len(face_data) >= 6 else 0.5
 
-        # ── Step 2: crop person from ORIGINAL frame (full-res quality) ─────
-        p_crop = orig_frame[oy1:oy2, op1:op2]
-        if p_crop.size == 0:
+        # ── Gate 1: Detection confidence (0.42 allows far/medium faces) ──────
+        if det_conf < 0.42:
+            print(f"[fr_async] Reject conf={det_conf:.2f} < 0.42  ({w}x{h})")
             continue
 
-        # ── Step 3: face detection inside person crop (multi-scale) ────────
-        face_boxes = detect_faces_multiscale(p_crop, min_size=20)
+        # ── Gate 2: Minimum face size (50px covers far faces) ─────────────────
+        if w < 50 or h < 50:
+            print(f"[fr_async] Reject size={w}x{h} < 50px")
+            continue
 
-        for face_data in face_boxes:
-            if len(face_data) == 5:
-                fx, fy, fw, fh, landmarks = face_data
-            else:
-                fx, fy, fw, fh = face_data
-                landmarks = None
+        # ── Gate 3: Valid landmarks (strongest non-face filter) ──────────────
+        if landmarks is None:
+            print(f"[fr_async] Reject: no valid landmarks ({w}x{h})")
+            continue
 
-            # Convert face coords from person-crop space → full frame space
-            abs_x = op1 + fx
-            abs_y = oy1 + fy
-            
-            # Offset landmarks too
-            if landmarks is not None:
-                abs_landmarks = []
-                for i in range(5):
-                    abs_landmarks.append(landmarks[2*i] + op1)     # x
-                    abs_landmarks.append(landmarks[2*i+1] + oy1)   # y
-                face_data_abs = (abs_x, abs_y, fw, fh, abs_landmarks)
-            else:
-                face_data_abs = (abs_x, abs_y, fw, fh)
+        # ── Gate 4: Face aspect ratio (wider range for side/far angles) ───────
+        aspect = w / (h + 1e-5)
+        if aspect < 0.4 or aspect > 2.2:
+            print(f"[fr_async] Reject: bad aspect {aspect:.2f}  ({w}x{h})")
+            continue
 
-            # ── Face-center zone check (precise check on actual face) ───────
-            face_cx = abs_x + fw // 2
-            face_cy = abs_y + fh // 2
-            face_in_zone = zone_manager.is_face_inside_normalised(
-                (abs_x, abs_y, fw, fh), frame_w, frame_h
-            )
-            if not face_in_zone:
-                # Face outside zone: ignore completely
+        # ── Gate 5: Sharpness (far faces are naturally less sharp) ────────────
+        fh_f, fw_f = orig_frame.shape[:2]
+        x1c, y1c   = max(0, x), max(0, y)
+        x2c, y2c   = min(fw_f, x + w), min(fh_f, y + h)
+        face_crop  = orig_frame[y1c:y2c, x1c:x2c]
+        blur_score = 0.0
+        if face_crop.size > 0:
+            gray_crop  = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
+            blur_score = float(cv2.Laplacian(gray_crop, cv2.CV_64F).var())
+            if blur_score < 12.0:
+                print(f"[fr_async] Reject: blur={blur_score:.1f} < 12  ({w}x{h})")
                 continue
 
-            # ── Step 4: recognize on ORIGINAL frame (returns 4 values now) ───
-            raw_name, p_type, conf, dist = recognize(orig_frame, face_data_abs)
-            abs_landmarks_pass = face_data_abs[4] if len(face_data_abs) == 5 else None
-            smooth_name, smooth_type, smooth_conf = _identity_tracker.update(
-                abs_x, abs_y, fw, fh, raw_name, p_type, conf, orig_frame, landmarks=abs_landmarks_pass
-            )
-            results.append({
-                "box":  (abs_x, abs_y, fw, fh),
-                "name": smooth_name,
-                "type": smooth_type,
-                "conf": smooth_conf,
-            })
+        print(
+            f"[fr_async] PASS: conf={det_conf:.2f} size={w}x{h} "
+            f"aspect={aspect:.2f} sharpness={blur_score:.1f}"
+        )
+
+        # ── Face-center zone check ───────────────────────────────────────────
+        if not zone_manager.is_face_inside_normalised((x, y, w, h), frame_w, frame_h):
+            continue
+
+        # ── Step 2: Recognize face ───────────────────────────────────────────
+        raw_name, p_type, conf, dist = recognize(orig_frame, face_data)
+
+        smooth_name, smooth_type, smooth_conf = _identity_tracker.update(
+            x, y, w, h, raw_name, p_type, conf, orig_frame, landmarks=landmarks,
+            camera_source=camera_source_config.get("type", "webcam"),
+            zone_id="Monitoring Zone" if zone_manager.load_zone() else "Default"
+        )
+
+        results.append({
+            "box":  (x, y, w, h),
+            "name": smooth_name,
+            "type": smooth_type,
+            "conf": smooth_conf,
+        })
 
     _identity_tracker.tick()
-    _fr_debug_persons = debug_persons   # expose for draw loop
     return results
 
 
@@ -487,12 +552,64 @@ def _draw_polygon_zone(frame: np.ndarray, points: list, frame_w: int, frame_h: i
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 0), 2)
 
 
+class FastTracker:
+    def __init__(self):
+        self.trackers = []
+    
+    def init_from_results(self, frame, results):
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        new_trackers = []
+        for res in results:
+            x, y, w, h = res["box"]
+            x, y = max(0, int(x)), max(0, int(y))
+            w = min(int(w), gray.shape[1] - x)
+            h = min(int(h), gray.shape[0] - y)
+            if w <= 0 or h <= 0: continue
+            tmpl = gray[y:y+h, x:x+w]
+            new_trackers.append({
+                "box": (x, y, w, h),
+                "template": tmpl,
+                "name": res["name"],
+                "type": res["type"],
+                "conf": res["conf"]
+            })
+        self.trackers = new_trackers
+
+    def update(self, frame):
+        if not self.trackers: return []
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        results = []
+        for t in self.trackers:
+            x, y, w, h = t["box"]
+            sx = max(0, x - int(w*0.5))
+            sy = max(0, y - int(h*0.5))
+            sw = min(gray.shape[1] - sx, int(w * 2.0))
+            sh = min(gray.shape[0] - sy, int(h * 2.0))
+            
+            search_roi = gray[sy:sy+sh, sx:sx+sw]
+            if search_roi.shape[0] < h or search_roi.shape[1] < w:
+                results.append({"box": t["box"], "name": t["name"], "type": t["type"], "conf": t["conf"]})
+                continue
+                
+            res = cv2.matchTemplate(search_roi, t["template"], cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(res)
+            
+            if max_val > 0.4:
+                nx = sx + max_loc[0]
+                ny = sy + max_loc[1]
+                t["box"] = (nx, ny, w, h)
+                t["template"] = gray[ny:ny+h, nx:nx+w]
+            
+            results.append({"box": t["box"], "name": t["name"], "type": t["type"], "conf": t["conf"]})
+        return results
+
+_fr_fast_tracker = FastTracker()
+
 def generate_fr_frames():
     """MJPEG generator — polygon zone-aware face recognition stream."""
     global is_fr_streaming, fr_future, fr_last_results
     _fr_skip = 0          # Frame-skip counter
-    _FR_PROCESS_EVERY = 4  # Process every 4th frame (stream still shows all)
-    _DETECT_WIDTH = 640   # Resize to this width for detection only
+    _FR_PROCESS_EVERY = 2  # Process every 2nd frame
 
     while is_fr_streaming:
         frame = camera_manager.get_latest_frame()
@@ -505,39 +622,36 @@ def generate_fr_frames():
         zone_points = zone_manager.load_zone()
 
         if zone_points is None:
-            _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-            yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
-            continue
-
-        # Submit background recognition every Nth frame
-        _fr_skip = (_fr_skip + 1) % _FR_PROCESS_EVERY
-        if _fr_skip == 0 and (fr_future is None or fr_future.done()):
-            if fr_future is not None:
+            fr_last_results = []
+            _fr_fast_tracker.trackers = []
+            _fr_skip = 0
+        else:
+            # Submit background recognition every Nth frame
+            _fr_skip = (_fr_skip + 1) % _FR_PROCESS_EVERY
+            if _fr_skip == 0 and (fr_future is None or fr_future.done()):
+                if fr_future is not None:
+                    try:
+                        res = fr_future.result()
+                        if res is not None:
+                            _fr_fast_tracker.init_from_results(frame, res)
+                    except Exception as e:
+                        print(f"[fr_async_task] Error: {e}")
+                
+                fr_future = fr_executor.submit(
+                    _fr_async_task, frame.copy(), fw, fh
+                )
+            elif fr_future is not None and fr_future.done() and not _fr_fast_tracker.trackers:
                 try:
-                    fr_last_results = fr_future.result() or fr_last_results
-                except Exception as e:
-                    print(f"[fr_async_task] Error: {e}")
-            # Downscale for fast detection
-            scale = _DETECT_WIDTH / max(fw, 1)
-            if scale < 1.0:
-                small = cv2.resize(frame, (int(fw*scale), int(fh*scale)))
-            else:
-                small = frame
-            fr_future = fr_executor.submit(
-                _fr_async_task, small.copy(), frame.copy(), fw, fh
-            )
-        elif fr_future is not None and fr_future.done() and fr_last_results == []:
-            try:
-                fr_last_results = fr_future.result() or []
-            except Exception:
-                pass
+                    res = fr_future.result()
+                    if res is not None:
+                        _fr_fast_tracker.init_from_results(frame, res)
+                except Exception:
+                    pass
+
+            fr_last_results = _fr_fast_tracker.update(frame)
 
         # Draw polygon zone
         _draw_polygon_zone(frame, zone_points, fw, fh)
-
-        # Draw person boxes from last detection (debug overlay)
-        for (dp1, dp2, dp3, dp4) in _fr_debug_persons:
-            cv2.rectangle(frame, (dp1, dp2), (dp3, dp4), (0, 165, 255), 1)  # orange thin
 
         # Draw latest recognition results
         for res in fr_last_results:
@@ -564,9 +678,6 @@ def generate_fr_frames():
             cv2.rectangle(frame, (ox, oy - th - 10), (ox + tw + 8, oy), color, -1)
             cv2.putText(frame, label, (ox + 4, oy - 6),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 2)
-            # Debug: show IN ZONE tag
-            cv2.putText(frame, "IN", (ox + ow - 22, oy + 14),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 150), 1)
 
         _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
         yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
@@ -589,6 +700,7 @@ def start_fr_camera():
         return jsonify({"success": False, "message": err}), 400
 
     load_encodings_from_db()
+    zone_manager.reload()   # re-read zone from DB (picks up zones saved while camera was off)
 
     if not _open_shared_camera():
         return jsonify({"success": False, "message": "Cannot open camera."}), 500
@@ -724,25 +836,92 @@ def stop_object_camera():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  RESTRICTED AREA STREAM
+#  RESTRICTED AREA STREAM  (uses dedicated ra_camera_manager — separate from FR)
 # ═══════════════════════════════════════════════════════════════════════════════
+
+# RA-specific source config (independent from FR's camera_source_config)
+_ra_source_config = {"type": "webcam", "url": None}
+
+# Predefined CCTV stream for RA (@ in password kept raw — ffmpeg parses last @ as host sep)
+_RA_CCTV_URL = "rtsp://Test:Nanta@123@192.168.29.118:554/1/1?transmode=unicast&profile=vam"
+
+
 def generate_restricted_frames():
-    global is_restricted_streaming, restricted_frame_counter
+    global is_restricted_streaming, ra_future, ra_last_results
     from models.restricted_area import process_frame
+    from models.restricted_area.database import load_ra_zone
+
+    _ra_skip = 0
+    _RA_PROCESS_EVERY = 2
 
     while is_restricted_streaming:
-        frame = camera_manager.get_latest_frame()
+        frame = ra_camera_manager.get_latest_frame()   # ← dedicated RA camera
         if frame is None:
             time.sleep(0.01)
             continue
         frame = frame.copy()
+        fh, fw = frame.shape[:2]
 
-        restricted_frame_counter += 1
-        if restricted_frame_counter % 3 != 0:
-            time.sleep(0.01)
-            continue
+        ra_z_pts = load_ra_zone("restricted_default")
 
-        frame = process_frame(frame)
+        # ── Zone Required Gate ──────────────────────────────────────────────
+        if ra_z_pts is None or len(ra_z_pts) < 3:
+            # NO zone = NO detection. Clear results.
+            ra_last_results = []
+            if ra_future is not None and not ra_future.done():
+                ra_future.cancel()
+        else:
+            _ra_skip = (_ra_skip + 1) % _RA_PROCESS_EVERY
+            if _ra_skip == 0 and (ra_future is None or ra_future.done()):
+                if ra_future is not None:
+                    try:
+                        ra_last_results = ra_future.result() or ra_last_results
+                    except Exception:
+                        pass
+
+                c_source = _ra_source_config.get("type", "webcam")
+                z_id     = "Restricted Zone"
+
+                ra_future = ra_executor.submit(
+                    process_frame, frame.copy(), c_source, z_id
+                )
+            elif ra_future is not None and ra_future.done() and not ra_last_results:
+                try:
+                    ra_last_results = ra_future.result() or []
+                except Exception:
+                    pass
+
+        # ── Draw RA Zone Overlay (same as FR) ───────────────────────────────
+        if ra_z_pts and len(ra_z_pts) >= 3:
+            pixel_pts = np.array(
+                [[int(p["x"] * fw), int(p["y"] * fh)] for p in ra_z_pts],
+                dtype=np.int32
+            ).reshape((-1, 1, 2))
+            
+            # Semi-transparent fill
+            overlay = frame.copy()
+            cv2.fillPoly(overlay, [pixel_pts], (0, 120, 255))  # Orange for RA
+            cv2.addWeighted(overlay, 0.08, frame, 0.92, 0, frame)
+            
+            # Border
+            cv2.polylines(frame, [pixel_pts], isClosed=True, color=(0, 120, 255), thickness=2)
+            
+            # Label
+            cx = int(np.mean([p["x"] * fw for p in ra_z_pts]))
+            cy = int(np.mean([p["y"] * fh for p in ra_z_pts]))
+            cv2.putText(frame, "Restricted Zone", (cx - 60, cy),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 120, 255), 2)
+
+        # ── Draw detection results on frame ─────────────────────────────────
+        for res in ra_last_results:
+            x1, y1, x2, y2 = res["box"]
+            color = res["color"]
+            label = res["label"]
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
+            cv2.rectangle(frame, (x1, y1 - th - 14), (x1 + tw + 6, y1), color, -1)
+            cv2.putText(frame, label, (x1 + 3, y1 - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
 
         _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
         yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
@@ -752,33 +931,55 @@ def generate_restricted_frames():
 def restricted_video_feed():
     return Response(generate_restricted_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
+
 @app.route("/start_restricted_camera", methods=["POST"])
 def start_restricted_camera():
-    global is_restricted_streaming
-    stop_all_models()
-    err = _handle_source_switch(request.json)
-    if err:
-        return jsonify({"success": False, "message": err}), 400
+    global is_restricted_streaming, ra_last_results
+
+    # Stop RA only — never touch FR or shared camera
+    is_restricted_streaming = False
+    ra_last_results = []
+    ra_camera_manager.close_camera()   # release RA camera cleanly
+    time.sleep(0.3)                    # brief settle before re-open
+
+    data   = request.json or {}
+    source = data.get("source", "webcam")
+
+    if source == "cctv":
+        _ra_source_config["type"] = "cctv"
+        _ra_source_config["url"]  = _RA_CCTV_URL
+        ok = ra_camera_manager.open_cctv(_RA_CCTV_URL)
+        print(f"[RA] open_cctv → {ok}  url={_RA_CCTV_URL}")
+    else:
+        _ra_source_config["type"] = "webcam"
+        _ra_source_config["url"]  = None
+        ok = ra_camera_manager.open_webcam(0)
+        print(f"[RA] open_webcam(0) → {ok}")
+
+    if not ok:
+        return jsonify({"success": False, "message": "Cannot open camera. Check device or RTSP stream."}), 500
+
     from models.restricted_area import load_known_persons
+    from models.restricted_area.database import load_ra_zone
     load_known_persons()
-    if not _open_shared_camera():
-        return jsonify({"success": False, "message": "Cannot open camera."}), 500
+    load_ra_zone("restricted_default", force=True)  # Reload zone from DB on start
     is_restricted_streaming = True
     return jsonify({"success": True})
 
+
 @app.route("/stop_restricted_camera", methods=["POST"])
 def stop_restricted_camera():
-    global is_restricted_streaming
+    global is_restricted_streaming, ra_last_results
     is_restricted_streaming = False
-    if not is_fr_streaming and not is_emotion_streaming and not is_object_streaming:
-        _close_shared_camera()
+    ra_last_results = []
+    ra_camera_manager.close_camera()   # only RA camera — FR camera untouched
     return jsonify({"success": True})
 
 
 @app.route("/add_known_person", methods=["POST"])
 def add_known_person():
     from models.restricted_area.face_handler import extract_encoding_from_image
-    from models.restricted_area.database    import insert_known_person
+    from models.restricted_area.database    import insert_ra_known_person
 
     name = request.form.get("name", "").strip()
     if not name:
@@ -800,7 +1001,7 @@ def add_known_person():
         if encoding is None:
             skipped_count += 1
             continue
-        if insert_known_person(name, encoding):
+        if insert_ra_known_person(name, encoding.tolist() if hasattr(encoding, 'tolist') else encoding):
             success_count += 1
         else:
             skipped_count += 1
@@ -819,8 +1020,9 @@ def add_known_person():
 
 @app.route("/get_alerts")
 def get_alerts():
-    from models.restricted_area.database import get_recent_alerts
-    return jsonify(get_recent_alerts())
+    from models.restricted_area.database import get_ra_dashboard
+    docs, _ = get_ra_dashboard("", "", 1, 20)
+    return jsonify(docs)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

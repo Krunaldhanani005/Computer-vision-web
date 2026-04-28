@@ -197,7 +197,7 @@ async function loadCurrent() {
     url = `/api/report/known?search=${encodeURIComponent(search)}&sort=${sort}&page=${_page}&per_page=${_perPage}`;
   else if (_tab === 'unknown')
     url = `/api/report/unknown?search=${encodeURIComponent(search)}&sort=${sort}&page=${_page}&per_page=${_perPage}`;
-  else
+  else if (_tab === 'blacklist')
     url = `/api/report/blacklist?search=${encodeURIComponent(search)}&date=${dateVal}&page=${_page}&per_page=${_perPage}`;
 
   document.getElementById('rp-grid').innerHTML = '<div class="rp-spinner">&#9696; Loading…</div>';
@@ -239,7 +239,7 @@ function renderStats(s) {
     html = `
       <div class="rp-stat"><div class="rp-stat-lbl">Total Unknown</div><div class="rp-stat-val" style="color:var(--o)">${s.total_unknown||0}</div><div class="rp-stat-sub">Unique unknowns captured</div></div>
       <div class="rp-stat"><div class="rp-stat-lbl">Unknown Today</div><div class="rp-stat-val" style="color:var(--r)">${s.unknown_today||0}</div><div class="rp-stat-sub">First seen today</div></div>`;
-  } else {
+  } else if (_tab === 'blacklist') {
     html = `
       <div class="rp-stat"><div class="rp-stat-lbl">Total Alerts</div><div class="rp-stat-val" style="color:var(--r)">${s.total_alerts||0}</div><div class="rp-stat-sub">All blacklist events</div></div>
       <div class="rp-stat"><div class="rp-stat-lbl">Alerts Today</div><div class="rp-stat-val" style="color:var(--o)">${s.alerts_today||0}</div><div class="rp-stat-sub">Triggered since midnight</div></div>
@@ -252,7 +252,7 @@ function renderStats(s) {
 function renderGrid(data) {
   const grid = document.getElementById('rp-grid');
   if (!data || data.length === 0) {
-    grid.innerHTML = `<div class="rp-empty"><span class="rp-empty-icon">${_tab==='blacklist'?'🚨':_tab==='unknown'?'🕵':'👤'}</span>No records found.</div>`;
+    grid.innerHTML = `<div class="rp-empty"><span class="rp-empty-icon">${_tab.includes('blacklist')||_tab==='restricted'?'🚨':_tab==='unknown'?'🕵':'👤'}</span>No records found.</div>`;
     return;
   }
   if (_tab === 'known')      grid.innerHTML = data.map(knownCard).join('');
@@ -283,7 +283,7 @@ function knownCard(d) {
     <div class="kc-name" title="${d.name}">${d.name||'—'}</div>
     <div class="kc-id" style="color:var(--g);font-weight:700;">Detected: ${d.total_detections||0} times</div>
     <div class="kc-meta" style="font-size:.65rem;color:#666;line-height:1.5;margin-top:6px;">
-      <div style="margin-bottom:2px;">First Seen: <span style="color:#aaa;">${first}</span></div>
+      <div style="margin-bottom:2px;">Attendance: <span style="color:#aaa;">${d.present_count || 0} days</span></div>
       <div>Last Seen: ${dot}<span style="color:#aaa;">${last}</span></div>
     </div>
   </div>
@@ -299,10 +299,11 @@ function unknownCard(d) {
 <div class="uc">
   ${img}
   <div class="uc-body">
-    <div class="uc-id" style="color:#aaa;font-weight:normal;margin-bottom:6px;">UNKNOWN FACE</div>
+    <div class="uc-id" style="color:#aaa;font-weight:normal;margin-bottom:6px;">ID: ${d.temp_id || 'UNKNOWN'}</div>
     <div class="uc-meta" style="font-size:.7rem;color:#666;line-height:1.6;">
       Date: <span style="color:#fff;font-weight:600;">${d.date||'—'}</span><br>
-      Time: <span style="color:#fff;font-weight:600;">${d.time||'—'}</span>
+      Time: <span style="color:#fff;font-weight:600;">${d.time||'—'}</span><br>
+      Count: <span style="color:#fff;font-weight:600;">${d.detection_count||0}</span>
     </div>
   </div>
 </div>`;
@@ -318,12 +319,13 @@ function alertCard(d) {
 <div class="ac" title="${d.name} — ${t}">
   ${img}
   <div class="ac-foot">
-    <div class="ac-type">⚠ Face Detection</div>
+    <div class="ac-type">⚠ Zone: ${d.zone_id || 'Default'}</div>
     <div class="ac-name">${d.name||'—'}</div>
-    <div class="ac-time">${t}</div>
+    <div class="ac-time">${t} | ${d.camera_source||'webcam'}</div>
   </div>
 </div>`;
 }
+
 
 // ── Pagination ────────────────────────────────────────────────────────────────
 function renderPagination() {
@@ -360,7 +362,9 @@ function goPage(p) {
 
 // ── Export ────────────────────────────────────────────────────────────────────
 function exportCSV() {
-  const url = _tab === 'known' ? '/api/report/export/known' : '/api/report/export/blacklist';
+  const url = _tab === 'known' ? '/api/report/export/known' : 
+              _tab === 'blacklist' ? '/api/report/export/blacklist' : 
+              '/api/report/export/restricted_area';
   window.location.href = url;
 }
 

@@ -57,6 +57,16 @@ class ZoneManager:
         delete_polygon_zone("default")
         self.active_points = None
 
+    def reload(self):
+        """
+        Re-read zone from DB. Called at camera start so any zone saved while
+        the camera was off is picked up without a server restart.
+        Does NOT overwrite an intentionally cleared zone (DB also cleared on clear_zone).
+        """
+        pts = self._load_from_db()
+        if pts is not None:
+            self.active_points = pts
+
     def load_zone(self):
         """Returns active points list (cached) or None."""
         return self.active_points
@@ -111,7 +121,7 @@ class ZoneManager:
         """
         pts = self.active_points
         if pts is None:
-            return False   # No zone → no recognition
+            return True   # No zone -> inside by default
 
         pixel_pts = [(int(p["x"] * frame_w), int(p["y"] * frame_h)) for p in pts]
         return self.is_face_inside_zone(face_rect, pixel_pts)

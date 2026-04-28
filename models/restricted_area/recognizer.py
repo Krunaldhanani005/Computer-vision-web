@@ -1,45 +1,40 @@
 """
 models/restricted_area/recognizer.py
 ──────────────────────────────────────
-Face-to-known-persons matching using cached encodings.
-Zero DB queries during inference.
+ArcFace cosine-distance matching for RA authorised persons.
+Uses shared ArcFace model; data (encodings) come from restricted_area_db only.
 """
 
 import numpy as np
-import face_recognition
+from models.face_recognition import arcface
 
-_DISTANCE_THRESHOLD = 0.55
+_RA_DISTANCE_THRESHOLD = 0.50  # cosine distance; <= this → authorised
 
-# In-memory cache (populated once at camera start)
-_names:     list[str]        = []
-_encodings: list[np.ndarray] = []
+_names:     list = []
+_encodings: list = []
 
 
-def load_cache(names: list[str], encodings: list[np.ndarray]) -> None:
-    """Replace in-memory cache with freshly loaded DB data."""
+def load_cache(names: list, encodings: list) -> None:
     global _names, _encodings
     _names     = names
     _encodings = encodings
-    print(f"[restricted_area.recognizer] Cache loaded: {len(_names)} known person(s).")
+    print(f"[ra.recognizer] Loaded {len(_names)} ArcFace RA encoding(s).")
 
 
-def match(unknown_encoding: np.ndarray) -> tuple[str, bool]:
+def match(unknown_embedding: np.ndarray) -> tuple:
     """
-    Compare *unknown_encoding* against the cached known persons.
-
-    Returns:
-        (name,  True)   — if a match is found below the distance threshold
-        ("Unknown", False) — otherwise
+    Returns (name, is_known):
+        (name,      True)  — authorised person matched
+        ("Unknown", False) — no match → intruder
     """
     if not _encodings:
         return "Unknown", False
-
     try:
-        distances = face_recognition.face_distance(_encodings, unknown_encoding)
-        best_idx  = int(np.argmin(distances))
-        if distances[best_idx] < _DISTANCE_THRESHOLD:
+        similarities = arcface.compute_similarities(_encodings, unknown_embedding)
+        distances    = [1.0 - s if s != -1.0 else 2.0 for s in similarities]
+        best_idx     = int(np.argmin(distances))
+        if distances[best_idx] <= _RA_DISTANCE_THRESHOLD:
             return _names[best_idx], True
     except Exception as e:
-        print(f"[restricted_area.recognizer] match error: {e}")
-
+        print(f"[ra.recognizer] match error: {e}")
     return "Unknown", False

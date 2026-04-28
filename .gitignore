@@ -1,7 +1,35 @@
-# ── Temporary video uploads (auto-deleted after processing) ──
+static/fr_logs/
+static/fr_reports/
+static/restricted_area/
+images/
+models/**/weights/
+*.onnx
+*.pt
+*.pth# ── Temporary video uploads (auto-deleted after processing) ──
 temp_uploads/
 uploads/
 
+# Python
+__pycache__/
+*.pyc
+venv/
+.env
+
+# Runtime images/logs
+static/fr_logs/
+static/fr_reports/
+static/restricted_area/
+images/
+
+# Model weights only (NOT code)
+models/**/weights/
+*.onnx
+*.pt
+*.pth
+*.caffemodel
+
+# Temp
+temp_uploads/
 # ── Python ──
 __pycache__/
 *.py[cod]

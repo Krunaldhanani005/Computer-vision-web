@@ -1,162 +1,415 @@
 {% extends "base.html" %}
-{% block title %}Restricted Area Security — CV Platform{% endblock %}
+{% block title %}Restricted Area Monitor — CV Platform{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="/static/style.css" />
 <style>
-  body.platform-body main { max-width:none !important; margin:0 !important; }
-  .model-workspace .card-body { padding: 28px 32px; }
-  .model-workspace .split-layout {
-    display: grid;
-    grid-template-columns: 360px 1fr;
-    gap: 28px;
-    align-items: start;
-  }
-  .model-workspace .video-container {
-    aspect-ratio: 16/9;
-    min-height: 340px;
-  }
-  .model-workspace .video-container img { width:100%; height:100%; object-fit:cover; }
-  @media (max-width:900px) {
-    .model-workspace .split-layout { grid-template-columns:1fr; }
-  }
+:root{--ra:#f97316;--ra-dim:rgba(249,115,22,.15);--br:rgba(255,255,255,.08);}
+.ra-wrap{max-width:1300px;margin:0 auto;padding:24px 28px;}
+.ra-topbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:22px;}
+.ra-title{font-size:1.3rem;font-weight:800;flex:1;}
+.ra-tag{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--ra);background:var(--ra-dim);border:1px solid rgba(249,115,22,.3);border-radius:4px;padding:2px 8px;}
+.ra-badge{padding:5px 14px;border-radius:20px;font-size:.72rem;font-weight:700;background:rgba(239,68,68,.12);color:#ef4444;border:1px solid rgba(239,68,68,.3);}
+.ra-badge.online{background:rgba(34,197,94,.12);color:#22c55e;border-color:rgba(34,197,94,.3);}
+/* Layout */
+.ra-layout{display:grid;grid-template-columns:320px 1fr;gap:22px;align-items:start;}
+@media(max-width:900px){.ra-layout{grid-template-columns:1fr;}}
+/* Side panel */
+.ra-panel{background:rgba(255,255,255,.03);border:1px solid var(--br);border-radius:14px;padding:20px;}
+.ra-panel h3{font-size:.9rem;font-weight:700;margin-bottom:14px;color:var(--ra);}
+.ra-form-label{font-size:.75rem;color:#888;margin-bottom:5px;display:block;text-transform:uppercase;letter-spacing:.05em;}
+.ra-input{width:100%;padding:9px 12px;background:rgba(255,255,255,.05);border:1px solid var(--br);color:#fff;border-radius:8px;outline:none;font-size:.85rem;box-sizing:border-box;}
+.ra-input:focus{border-color:var(--ra);}
+.ra-upload{border:1.5px dashed var(--br);border-radius:8px;padding:14px;text-align:center;cursor:pointer;transition:.2s;margin-top:6px;}
+.ra-upload:hover{border-color:var(--ra);background:var(--ra-dim);}
+.ra-btn{width:100%;padding:10px;border-radius:8px;font-size:.85rem;font-weight:700;cursor:pointer;border:none;transition:.2s;margin-top:10px;}
+.ra-btn.primary{background:var(--ra);color:#fff;}
+.ra-btn.primary:hover{background:#ea6c0a;}
+.ra-btn.secondary{background:rgba(255,255,255,.07);color:#ccc;border:1px solid var(--br);}
+.ra-btn.secondary:hover{background:rgba(255,255,255,.12);}
+.ra-btn.danger{background:rgba(239,68,68,.15);color:#ef4444;border:1px solid rgba(239,68,68,.3);}
+.ra-btn.danger:hover{background:rgba(239,68,68,.25);}
+.ra-status{margin-top:10px;padding:9px 12px;border-radius:7px;font-size:.8rem;background:rgba(255,255,255,.04);border:1px solid var(--br);color:#888;min-height:36px;}
+/* Video panel */
+.ra-video-wrap{position:relative;background:#000;border-radius:14px;overflow:hidden;aspect-ratio:16/9;border:1px solid var(--br);}
+.ra-feed{width:100%;height:100%;object-fit:fill;display:block;}
+.ra-offline{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#444;font-size:.9rem;gap:10px;}
+#ra-zone-canvas{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;z-index:10;}
+/* Zone controls */
+.zone-row{display:flex;gap:10px;margin-top:12px;}
+.zone-row button{flex:1;padding:9px 12px;border-radius:8px;font-size:.8rem;font-weight:600;cursor:pointer;border:1px solid var(--br);background:rgba(255,255,255,.05);color:#ccc;transition:.2s;}
+.zone-row .save-btn{background:rgba(34,197,94,.15);border-color:rgba(34,197,94,.4);color:#22c55e;}
+.zone-row .save-btn:hover{background:rgba(34,197,94,.25);}
+.zone-row .del-btn{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35);color:#ef4444;}
+.zone-row .del-btn:hover{background:rgba(239,68,68,.22);}
+.zone-hint{margin-top:8px;padding:8px 12px;background:rgba(249,115,22,.07);border:1px solid rgba(249,115,22,.2);border-radius:7px;font-size:.77rem;color:#f97316;}
+/* Source selector */
+.ra-source{margin-top:14px;display:flex;flex-direction:column;gap:8px;}
+.ra-select{padding:9px 12px;background:rgba(255,255,255,.05);border:1px solid var(--br);color:#fff;border-radius:8px;outline:none;font-size:.85rem;cursor:pointer;width:100%;}
+.ra-ctrl-row{display:flex;gap:10px;}
+.ra-start-btn{flex:1;padding:10px;border-radius:8px;background:var(--ra);color:#fff;font-weight:700;font-size:.85rem;cursor:pointer;border:none;}
+.ra-stop-btn{flex:1;padding:10px;border-radius:8px;background:rgba(239,68,68,.2);color:#ef4444;border:1px solid rgba(239,68,68,.4);font-weight:700;font-size:.85rem;cursor:pointer;}
+/* Preview thumbnails */
+.ra-thumb-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+.ra-thumb{width:48px;height:48px;object-fit:cover;border-radius:6px;border:1px solid var(--br);}
+/* Link to report */
+.ra-report-link{display:flex;align-items:center;gap:8px;padding:10px 14px;background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.25);border-radius:9px;color:#f97316;font-size:.82rem;font-weight:600;text-decoration:none;margin-top:14px;transition:.2s;}
+.ra-report-link:hover{background:rgba(249,115,22,.16);}
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="page-wrap p-page-enter">
+<div class="ra-wrap">
 
-  <div class="page-eyebrow">
-    <a href="/live-demo" class="page-back">
-      <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
-      Back to Demo
+  <!-- Header -->
+  <div class="ra-topbar">
+    <span class="ra-tag">Restricted Area</span>
+    <div class="ra-title">🔒 Restricted Area Monitor</div>
+    <span class="ra-badge" id="ra-status-badge">OFFLINE</span>
+    <a href="/ra-report" class="ra-report-link" style="margin-top:0;">
+      📊 View Reports →
     </a>
   </div>
 
-  <div class="page-hd">
-    <div class="page-hd-inner">
-      <div class="page-hd-icon page-hd-icon--restricted">
-        <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-      </div>
-      <div class="page-hd-info">
-        <h1 class="page-title">Restricted Area Security</h1>
-        <p class="page-desc">
-          Register authorised persons via face photos, then monitor a restricted zone.
-          YOLO detects persons, face encodings are matched against the database,
-          and any unknown individual triggers a timestamped alert.
+  <div class="ra-layout">
+
+    <!-- ── LEFT PANEL ─────────────────────────────────── -->
+    <div style="display:flex;flex-direction:column;gap:18px;">
+
+      <!-- Register Authorised Person -->
+      <div class="ra-panel">
+        <h3>Register Authorised Person</h3>
+        <p style="font-size:.78rem;color:#666;margin-bottom:14px;line-height:1.5;">
+          Registered persons are allowed in the restricted zone. Unknown faces will trigger alerts.
         </p>
-        <div class="page-tags">
-          <span class="p-tag p-tag--red">YOLOv8</span>
-          <span class="p-tag p-tag--red">face_recognition</span>
-          <span class="p-tag p-tag--red">MongoDB Alerts</span>
-          <span class="p-tag p-tag--live">&#9679; Live</span>
+        <label class="ra-form-label">Full Name</label>
+        <input class="ra-input" id="ra-name" type="text" placeholder="E.g., Alice Johnson" autocomplete="off"/>
+
+        <label class="ra-form-label" style="margin-top:12px;">Photos (3+ recommended)</label>
+        <div class="ra-upload" id="ra-upload-zone" onclick="document.getElementById('ra-file-input').click()">
+          <div style="font-size:1.4rem;">⊞</div>
+          <p style="font-size:.82rem;color:#666;margin-top:4px;">Click to select images</p>
+          <input type="file" id="ra-file-input" accept="image/*" multiple hidden onchange="raHandleFiles(this.files)"/>
+          <div class="ra-thumb-row" id="ra-thumbs"></div>
+        </div>
+
+        <button class="ra-btn primary" id="ra-register-btn" onclick="raRegister()">Register Person</button>
+        <div class="ra-status" id="ra-reg-status">Ready</div>
+      </div>
+
+      <!-- Zone Instructions -->
+      <div class="ra-panel">
+        <h3>Zone Configuration</h3>
+        <div class="zone-hint" id="ra-zone-hint">
+          📍 Click on the video to draw a polygon zone. Minimum 3 points required.
+        </div>
+        <div class="zone-row">
+          <button class="save-btn" onclick="raSaveZone()">✔ Save Zone</button>
+          <button class="del-btn"  onclick="raDeleteZone()">✖ Delete Zone</button>
+          <button onclick="raUndoPoint()">↩ Undo</button>
         </div>
       </div>
+
     </div>
-  </div>
 
-  <!-- Model Workspace -->
-  <div class="model-workspace">
-    <section class="card" style="margin:0;">
-      <div class="card-header">
-        <div class="status-indicator" id="restricted-indicator">READY</div>
-        <h2>Restricted Area Security</h2>
+    <!-- ── RIGHT PANEL: Video + Controls ──────────────── -->
+    <div>
+
+      <!-- Video -->
+      <div class="ra-video-wrap" id="ra-video-wrap">
+        <div class="ra-offline" id="ra-offline">
+          <svg viewBox="0 0 24 24" style="width:40px;height:40px;stroke:#444;fill:none;stroke-width:2;">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+          <span>Restricted Area Monitor Offline</span>
+        </div>
+        <img id="ra-feed" src="" alt="RA feed" style="display:none;" class="ra-feed"/>
+        <canvas id="ra-zone-canvas"></canvas>
       </div>
 
-      <div class="card-body">
-
-        <!-- Top Row: Registration + Monitor -->
-        <div class="split-layout" style="margin-bottom:28px;">
-
-          <!-- LEFT: Register Known Person -->
-          <div class="form-side">
-            <h3 style="margin-bottom:12px;color:var(--success);">Register Known Person</h3>
-            <p style="color:#aaa;font-size:.88rem;margin-bottom:14px;line-height:1.5;">
-              Upload at least 3 clear, front-facing photos. Encodings are stored — images are discarded immediately.
-            </p>
-
-            <div class="form-group">
-              <label for="ra-name">Full Name</label>
-              <input type="text" id="ra-name" placeholder="E.g., Alice Johnson" autocomplete="off"/>
-            </div>
-
-            <div class="form-group" style="margin-top:12px;">
-              <label>Photos (3+ recommended)</label>
-              <div class="upload-zone" id="ra-upload-zone" onclick="document.getElementById('ra-file-input').click()" style="min-height:80px;">
-                <div class="icon" style="font-size:1.6rem;">&#x229E;</div>
-                <p style="font-size:.85rem;">Click to select images</p>
-                <input type="file" id="ra-file-input" accept="image/*" multiple hidden onchange="raHandleUpload(this.files)"/>
-                <div class="preview-container" id="ra-preview"></div>
-              </div>
-            </div>
-
-            <button class="btn btn--success" id="ra-register-btn" onclick="raRegisterPerson()" style="width:100%;margin-top:14px;">
-              Register Person
-            </button>
-            <div class="status-box" id="ra-register-status" style="margin-top:12px;">Ready</div>
-          </div>
-
-          <!-- RIGHT: Camera Monitor -->
-          <div class="view-side">
-            <div class="video-container" id="restricted-video-container">
-              <div class="placeholder" id="restricted-placeholder">
-                <div class="icon">&#x26E8;</div>
-                <p>Security Cam Offline</p>
-              </div>
-              <img id="restricted-feed" src="" alt="Restricted Area feed" style="display:none;" />
-            </div>
-
-            <div class="source-selector" style="margin-top:15px;background:rgba(0,0,0,.2);padding:10px;border-radius:8px;">
-              <select id="restricted-source-type" style="width:100%;padding:8px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.2);color:white;border-radius:4px;outline:none;margin-bottom:8px;" onchange="toggleCardCameraInput('restricted')">
-                <option value="webcam" style="color:black;">Webcam</option>
-                <option value="cctv"   style="color:black;">CCTV (Auto)</option>
-              </select>
-              <div id="restricted-cctv-container" style="display:none;margin-bottom:8px;">
-                <div style="padding:9px 12px;background:rgba(14,165,233,.06);border:1px solid rgba(14,165,233,.18);border-radius:6px;display:flex;align-items:center;gap:8px;font-size:.78rem;color:#7dd3fc;">
-                  <span>&#9679;</span> Auto-connecting using stored credentials
-                </div>
-              </div>
-              <div style="display:flex;gap:10px;">
-                <button class="btn btn--primary" id="restricted-start-btn" style="flex:1;">&#x25B6; Start Monitoring</button>
-                <button class="btn btn--danger"  id="restricted-stop-btn"  style="flex:1;display:none;">&#x25FC; Stop Monitoring</button>
-              </div>
-            </div>
-            <div class="status-box" id="restricted-status" style="margin-top:10px;">Security Offline</div>
-          </div>
-
-        </div><!-- /split-layout -->
-
-        <!-- Alert Logs Table -->
-        <div style="margin-top:10px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-            <h3>Recent Intrusion Alerts</h3>
-            <button class="btn btn--object" onclick="raRefreshAlerts()" style="padding:6px 14px;font-size:.82rem;">&#8635; Refresh</button>
-          </div>
-          <div style="background:rgba(0,0,0,.3);border-radius:10px;border:1px solid rgba(255,255,255,.08);overflow:hidden;">
-            <table style="width:100%;border-collapse:collapse;text-align:left;font-size:.9rem;">
-              <thead style="background:rgba(255,255,255,.04);">
-                <tr>
-                  <th style="padding:10px 16px;border-bottom:1px solid rgba(255,255,255,.08);font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;color:#64748b;">Timestamp</th>
-                  <th style="padding:10px 16px;border-bottom:1px solid rgba(255,255,255,.08);font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;color:#64748b;">Status</th>
-                  <th style="padding:10px 16px;border-bottom:1px solid rgba(255,255,255,.08);font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;color:#64748b;">Snapshot</th>
-                </tr>
-              </thead>
-              <tbody id="alert-logs-body">
-                <tr>
-                  <td colspan="3" style="padding:22px;text-align:center;color:#475569;font-size:.85rem;">No alerts logged yet.</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+      <!-- Source selector + controls -->
+      <div class="ra-source">
+        <select class="ra-select" id="ra-source-type" onchange="raToggleCCTV()">
+          <option value="webcam">Webcam</option>
+          <option value="cctv">CCTV / RTSP / IP Camera</option>
+        </select>
+        <div id="ra-cctv-row" style="display:none;margin-top:8px;padding:9px 12px;background:rgba(249,115,22,.07);border:1px solid rgba(249,115,22,.25);border-radius:7px;font-size:.78rem;color:#f97316;">
+          📡 Predefined stream: <code style="font-size:.72rem;">rtsp://192.168.29.118:554/1/1</code><br/>
+          <span style="color:#666;font-size:.72rem;">Credentials applied automatically</span>
         </div>
+        <div class="ra-ctrl-row">
+          <button class="ra-start-btn" id="ra-start-btn" onclick="raStart()">▶ Start Monitoring</button>
+          <button class="ra-stop-btn"  id="ra-stop-btn"  onclick="raStop()" style="display:none;">■ Stop Monitoring</button>
+        </div>
+        <div class="ra-status" id="ra-monitor-status">Security Offline. Start monitoring to begin.</div>
+      </div>
 
-      </div><!-- /card-body -->
-    </section>
-  </div><!-- /model-workspace -->
+    </div>
+  </div><!-- /layout -->
 
-</div><!-- /page-wrap -->
+</div>
 {% endblock %}
 
 {% block extra_scripts %}
-<script src="/static/script.js?v=5"></script>
+<script>
+// ═══════════════════════════════════════════════════════════
+//  ZONE DRAWING — RA-specific (saves to /ra/save_zone)
+// ═══════════════════════════════════════════════════════════
+let raPoints = [];
+let raCanvas, raCtx;
+let raZoneLocked = false;
+
+function raInitCanvas() {
+  raCanvas = document.getElementById('ra-zone-canvas');
+  if (!raCanvas) return;
+  raCtx = raCanvas.getContext('2d');
+
+  function resize() {
+    raCanvas.width  = raCanvas.offsetWidth;
+    raCanvas.height = raCanvas.offsetHeight;
+    raDrawZone();
+  }
+  resize();
+  new ResizeObserver(resize).observe(raCanvas);
+
+  raCanvas.onclick = (e) => {
+    if (raZoneLocked) return;
+    const rect = raCanvas.getBoundingClientRect();
+    const nx = (e.clientX - rect.left)  / rect.width;
+    const ny = (e.clientY - rect.top)   / rect.height;
+    raPoints.push({ x: nx, y: ny });
+    raDrawZone();
+    raUpdateHint();
+  };
+}
+
+function raDrawZone() {
+  if (!raCtx) return;
+  raCtx.clearRect(0, 0, raCanvas.width, raCanvas.height);
+  if (raPoints.length === 0) return;
+
+  const px = raPoints.map(p => ({ x: p.x * raCanvas.width, y: p.y * raCanvas.height }));
+
+  // Fill
+  if (px.length >= 3) {
+    raCtx.beginPath();
+    raCtx.moveTo(px[0].x, px[0].y);
+    px.slice(1).forEach(p => raCtx.lineTo(p.x, p.y));
+    raCtx.closePath();
+    raCtx.fillStyle   = raZoneLocked ? 'rgba(249,115,22,0.12)' : 'rgba(249,115,22,0.09)';
+    raCtx.fill();
+  }
+
+  // Stroke
+  raCtx.beginPath();
+  raCtx.moveTo(px[0].x, px[0].y);
+  px.slice(1).forEach(p => raCtx.lineTo(p.x, p.y));
+  if (px.length >= 3) raCtx.closePath();
+  raCtx.strokeStyle = raZoneLocked ? '#f97316' : 'rgba(249,115,22,0.7)';
+  raCtx.lineWidth   = 2;
+  raCtx.setLineDash(raZoneLocked ? [] : [6, 4]);
+  raCtx.stroke();
+  raCtx.setLineDash([]);
+
+  // Dots
+  px.forEach((p, i) => {
+    raCtx.beginPath();
+    raCtx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+    raCtx.fillStyle = i === 0 ? '#f97316' : '#fff';
+    raCtx.fill();
+    raCtx.strokeStyle = '#f97316';
+    raCtx.lineWidth = 1.5;
+    raCtx.stroke();
+
+    // Point labels
+    raCtx.fillStyle = '#f97316';
+    raCtx.font = 'bold 11px Inter, sans-serif';
+    raCtx.fillText(i + 1, p.x + 7, p.y - 5);
+  });
+}
+
+function raUpdateHint() {
+  const hint = document.getElementById('ra-zone-hint');
+  if (raZoneLocked) {
+    hint.textContent = `✅ Zone active — ${raPoints.length} points. Click Delete Zone to reset.`;
+    hint.style.color = '#22c55e';
+    hint.style.background = 'rgba(34,197,94,.07)';
+    hint.style.borderColor = 'rgba(34,197,94,.3)';
+  } else if (raPoints.length === 0) {
+    hint.textContent = '📍 Click on the video to draw a polygon zone. Minimum 3 points required.';
+    hint.style.color = '#f97316';
+    hint.style.background = 'rgba(249,115,22,.07)';
+    hint.style.borderColor = 'rgba(249,115,22,.2)';
+  } else {
+    hint.textContent = `${raPoints.length} point(s) — need ${Math.max(0, 3 - raPoints.length)} more to save.`;
+  }
+}
+
+async function raSaveZone() {
+  if (raPoints.length < 3) {
+    alert('Draw at least 3 points to define a zone.');
+    return;
+  }
+  try {
+    const r = await fetch('/ra/save_zone', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ zone: raPoints })
+    });
+    const j = await r.json();
+    if (j.success) {
+      raZoneLocked = true;
+      raCanvas.onclick = null;
+      raDrawZone();
+      raUpdateHint();
+    } else {
+      alert('Failed to save zone: ' + (j.error || 'unknown error'));
+    }
+  } catch(e) { alert('Error saving zone.'); }
+}
+
+async function raDeleteZone() {
+  try {
+    await fetch('/ra/save_zone', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ zone: null })
+    });
+    raPoints = [];
+    raZoneLocked = false;
+    raCtx.clearRect(0, 0, raCanvas.width, raCanvas.height);
+    raCanvas.onclick = (e) => {
+      if (raZoneLocked) return;
+      const rect = raCanvas.getBoundingClientRect();
+      raPoints.push({ x: (e.clientX-rect.left)/rect.width, y: (e.clientY-rect.top)/rect.height });
+      raDrawZone(); raUpdateHint();
+    };
+    raUpdateHint();
+  } catch(e) { alert('Error deleting zone.'); }
+}
+
+function raUndoPoint() {
+  if (raZoneLocked || raPoints.length === 0) return;
+  raPoints.pop();
+  raDrawZone();
+  raUpdateHint();
+}
+
+async function raLoadExistingZone() {
+  try {
+    const r = await fetch('/ra/get_zone');
+    const j = await r.json();
+    if (j.zone && j.zone.length >= 3) {
+      raPoints = j.zone;
+      raZoneLocked = true;
+      raCanvas.onclick = null;
+      raDrawZone();
+      raUpdateHint();
+    }
+  } catch(e) {}
+}
+
+// ═══════════════════════════════════════════════════════════
+//  CAMERA CONTROLS
+// ═══════════════════════════════════════════════════════════
+function raToggleCCTV() {
+  const t = document.getElementById('ra-source-type').value;
+  document.getElementById('ra-cctv-row').style.display = t === 'cctv' ? '' : 'none';
+}
+
+async function raStart() {
+  const src = document.getElementById('ra-source-type').value;
+  const payload = { source: src };   // key must be "source" to match backend
+
+  // CCTV uses hardcoded predefined stream — no URL needed
+
+  try {
+    const r = await fetch('/start_restricted_camera', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const j = await r.json();
+    if (j.success) {
+      const feed = document.getElementById('ra-feed');
+      feed.src = '/restricted_video_feed?' + Date.now();
+      feed.style.display = 'block';
+      document.getElementById('ra-offline').style.display = 'none';
+      document.getElementById('ra-start-btn').style.display = 'none';
+      document.getElementById('ra-stop-btn').style.display = '';
+      document.getElementById('ra-status-badge').textContent = 'MONITORING';
+      document.getElementById('ra-status-badge').classList.add('online');
+      document.getElementById('ra-monitor-status').textContent = 'Security Monitoring Active.';
+      document.getElementById('ra-monitor-status').style.color = '#22c55e';
+    } else {
+      alert('Cannot start camera: ' + (j.message || 'Unknown error'));
+    }
+  } catch(e) { alert('Error starting monitoring.'); }
+}
+
+async function raStop() {
+  try {
+    await fetch('/stop_restricted_camera', { method: 'POST' });
+    const feed = document.getElementById('ra-feed');
+    feed.src = '';
+    feed.style.display = 'none';
+    document.getElementById('ra-offline').style.display = '';
+    document.getElementById('ra-start-btn').style.display = '';
+    document.getElementById('ra-stop-btn').style.display = 'none';
+    document.getElementById('ra-status-badge').textContent = 'OFFLINE';
+    document.getElementById('ra-status-badge').classList.remove('online');
+    document.getElementById('ra-monitor-status').textContent = 'Security Offline.';
+    document.getElementById('ra-monitor-status').style.color = '';
+  } catch(e) {}
+}
+
+// ═══════════════════════════════════════════════════════════
+//  PERSON REGISTRATION
+// ═══════════════════════════════════════════════════════════
+let raFiles = [];
+
+function raHandleFiles(files) {
+  raFiles = Array.from(files);
+  const row = document.getElementById('ra-thumbs');
+  row.innerHTML = raFiles.map(f => {
+    const url = URL.createObjectURL(f);
+    return `<img class="ra-thumb" src="${url}" alt="preview">`;
+  }).join('');
+}
+
+async function raRegister() {
+  const name = document.getElementById('ra-name').value.trim();
+  const st   = document.getElementById('ra-reg-status');
+  if (!name) { st.textContent = '⚠ Name is required.'; st.style.color='#f97316'; return; }
+  if (raFiles.length === 0) { st.textContent = '⚠ Select at least 1 image.'; st.style.color='#f97316'; return; }
+
+  st.textContent = 'Registering…'; st.style.color = '#888';
+  const btn = document.getElementById('ra-register-btn');
+  btn.disabled = true;
+
+  const fd = new FormData();
+  fd.append('name', name);
+  raFiles.forEach(f => fd.append('images', f));
+
+  try {
+    const r = await fetch('/add_known_person', { method: 'POST', body: fd });
+    const j = await r.json();
+    st.textContent = j.message;
+    st.style.color  = j.success ? '#22c55e' : '#ef4444';
+    if (j.success) {
+      document.getElementById('ra-name').value = '';
+      raFiles = [];
+      document.getElementById('ra-thumbs').innerHTML = '';
+    }
+  } catch(e) {
+    st.textContent = 'Server error.'; st.style.color = '#ef4444';
+  }
+  btn.disabled = false;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════════════════════
+raInitCanvas();
+raLoadExistingZone();
+</script>
 {% endblock %}

@@ -22,11 +22,14 @@ _ARCFACE_DST = np.array([
     [70.7299, 92.2041]
 ], dtype=np.float32)
 
-def align_face(img: np.ndarray, landmarks: list) -> np.ndarray:
+def align_face(img: np.ndarray, landmarks) -> np.ndarray:
     """
     Align face crop to 112x112 using 5 landmarks.
-    landmarks should be: [right_eye_x, right_eye_y, left_eye_x, left_eye_y, nose_x, nose_y, right_mouth_x, right_mouth_y, left_mouth_x, left_mouth_y]
+    landmarks: [rx,ry, lx,ly, nx,ny, rmx,rmy, lmx,lmy]  (10 floats)
+    Returns None when landmarks are None or alignment fails.
     """
+    if landmarks is None:
+        return None
     src = np.array(landmarks, dtype=np.float32).reshape(5, 2)
     tform, _ = cv2.estimateAffinePartial2D(src, _ARCFACE_DST, method=cv2.LMEDS)
     if tform is None:

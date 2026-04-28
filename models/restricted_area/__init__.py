@@ -1,172 +1,332 @@
 """
 models/restricted_area/__init__.py
 ────────────────────────────────────
-Controller — orchestrates the full per-frame pipeline:
-  detector  →  face_handler  →  recognizer  →  tracker  →  database
+Independent Restricted Area surveillance module.
 
-Exposes two public functions used by app.py:
-    load_known_persons()   — call once at camera start
-    process_frame(frame)   — call each processed frame; returns annotated frame
+Shared:  YuNet face detector + ArcFace model
+Separate: restricted_area_db collections (ra_events, ra_alerts, ra_snapshots)
+
+Pipeline per frame:
+    detect faces (YuNet multiscale, min_size=50)
+    → quality gates (conf, size, landmarks, sharpness)
+    → zone check (face center inside RA polygon — loaded from ra_zones)
+    → ArcFace embed
+    → match against RA authorised persons (authorized)
+    → match against FR blacklist (blacklist / critical alert)
+    → if unknown  inside zone: store + alert
+    → if blacklist inside zone: store + critical alert
 """
 
 import os
 import time
+import uuid
 import threading
+
 import cv2
 import numpy as np
-import face_recognition
 
-from . import detector, face_handler, recognizer, tracker
-from .database import load_all_known_persons, log_alert
+# ── Shared models (detection + recognition; data stored separately) ─────────
+from models.face_recognition.face_detector import detect_faces_multiscale
+from models.face_recognition import arcface
+from models.face_recognition.face_recognition_model import normalize_face
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-_ALERTS_DIR        = os.path.join("static", "alerts")
-_DISTANCE_THRESH   = 0.55   # face match cutoff
-_DEDUP_COOLDOWN    = 10     # seconds — reject duplicate alerts for same face
-_DEDUP_MATCH_DIST  = 0.45   # encoding distance to consider "same person"
+# ── RA-specific database ─────────────────────────────────────────────────────
+from .database import (
+    load_all_ra_known_persons,
+    load_ra_zone,
+    upsert_ra_event,
+    insert_ra_alert,
+)
 
-# Colours
-_COLOR_KNOWN   = (0, 220, 80)     # green
-_COLOR_UNKNOWN = (0, 0, 220)      # red  (BGR)
+# ── RA snapshot directories ───────────────────────────────────────────────────
+_RA_SNAP_ROOT    = os.path.join("static", "restricted_area")
+_RA_SNAP_UNKNOWN = os.path.join(_RA_SNAP_ROOT, "unknown")
+_RA_SNAP_BL      = os.path.join(_RA_SNAP_ROOT, "blacklist")
+for _d in [_RA_SNAP_ROOT, _RA_SNAP_UNKNOWN, _RA_SNAP_BL]:
+    os.makedirs(_d, exist_ok=True)
 
-os.makedirs(_ALERTS_DIR, exist_ok=True)
+# ── Quality gate parameters ───────────────────────────────────────────────────
+_MIN_CONF      = 0.35   # YuNet detection confidence
+_MIN_FACE_SIZE = 50     # px
+_MIN_SHARPNESS = 10.0   # Laplacian variance
 
-# ── Encoding-based dedup cache ────────────────────────────────────────────────
-# Each entry: { "encoding": np.ndarray, "time": float }
-_recent_alerts: list[dict] = []
+# ── Recognition threshold (cosine distance) ───────────────────────────────────
+_DISTANCE_THRESHOLD = 0.50
+
+# ── Alert cooldown per slot ───────────────────────────────────────────────────
+_ALERT_COOLDOWN    = 30.0   # seconds between repeat unknown alerts
+_BL_ALERT_COOLDOWN = 15.0   # shorter cooldown for blacklist (critical)
+
+# ── In-memory RA authorised persons ──────────────────────────────────────────
+_ra_names:     list = []
+_ra_encodings: list = []
+
+# ── Per-face tracker slots ────────────────────────────────────────────────────
+_slots: list = []   # [{box, age, event_id, last_alert}]
+
+# ── Alert count per event_id ──────────────────────────────────────────────────
+_alert_counts: dict = {}
 
 
-# ── Public initialisation ─────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+#  PUBLIC API
+# ══════════════════════════════════════════════════════════════════════════════
 
 def load_known_persons() -> None:
-    """Load authorised encodings from MongoDB into recognizer's RAM cache."""
-    global _recent_alerts
-    names, encodings = load_all_known_persons()
-    recognizer.load_cache(names, encodings)
-    tracker.reset()
-    _recent_alerts = []   # clear dedup cache on fresh start
+    """Load authorised RA persons into memory. Call at camera start."""
+    global _ra_names, _ra_encodings, _slots, _alert_counts
+    _ra_names, _ra_encodings = load_all_ra_known_persons()
+    _slots        = []
+    _alert_counts = {}
+    print(f"[restricted_area] {len(_ra_names)} RA authorised encodings loaded ✓")
 
 
-# ── Per-frame processing ──────────────────────────────────────────────────────
-
-def process_frame(frame: np.ndarray) -> np.ndarray:
+def process_frame(frame: np.ndarray,
+                  camera_source: str = "webcam",
+                  zone_id: str = "Default") -> list:
     """
-    Run the full Restricted Area pipeline on one BGR frame.
-    Returns the annotated frame (never raises).
+    Run full RA pipeline on one BGR frame.
+    Returns list of dicts: {box:(x1,y1,x2,y2), label, color, person_type}
     """
+    results = []
     try:
-        # 1. Detect persons (YOLO)
-        person_boxes = detector.get_persons(frame)
-        if not person_boxes:
-            return frame
+        # Zone required — no zone → no detection (strict enforcement)
+        zone_pts = load_ra_zone("restricted_default")
+        if zone_pts is None or len(zone_pts) < 3:
+            return []
 
-        # 2. Update tracker → get stable IDs + cooldown flags
-        tracks = tracker.update(person_boxes)
+        fh, fw = frame.shape[:2]
 
-        for track in tracks:
-            tid        = track["id"]
-            box        = track["box"]
-            cooldown_ok = track["cooldown_ok"]
-            x1, y1, x2, y2 = box
+        # ── Detect all faces (multiscale: near + medium + far) ──────────────
+        face_boxes = detect_faces_multiscale(frame, min_size=_MIN_FACE_SIZE)
 
-            # 3. Extract face encoding from person crop
-            person_crop = frame[y1:y2, x1:x2]
-            if person_crop.size == 0:
+        for face_data in face_boxes:
+            if len(face_data) < 5:
                 continue
 
-            encoding = _get_encoding_from_crop(person_crop)
+            x, y, w, h = face_data[0], face_data[1], face_data[2], face_data[3]
+            landmarks  = face_data[4]
+            det_conf   = float(face_data[5]) if len(face_data) >= 6 else 0.5
 
-            if encoding is None:
-                # No face visible — draw a neutral grey box
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (120, 120, 120), 1)
+            # Gate 1: detection confidence
+            if det_conf < _MIN_CONF:
                 continue
 
-            # 4. Match against cached known persons
-            name, is_known = recognizer.match(encoding)
+            # Gate 2: face size (allows far faces >= 50px)
+            if w < _MIN_FACE_SIZE or h < _MIN_FACE_SIZE:
+                continue
 
-            # 5. Draw annotated box
-            color = _COLOR_KNOWN if is_known else _COLOR_UNKNOWN
-            label = name if is_known else "UNKNOWN — ALERT"
+            # Gate 3: valid landmarks (strongest false-positive filter)
+            if landmarks is None:
+                continue
 
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
-            cv2.rectangle(frame, (x1, y1 - th - 14), (x1 + tw + 6, y1), color, -1)
-            cv2.putText(frame, label, (x1 + 3, y1 - 8),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+            # Gate 4: sharpness
+            x1c = max(0, x);    y1c = max(0, y)
+            x2c = min(fw, x+w); y2c = min(fh, y+h)
+            crop = frame[y1c:y2c, x1c:x2c]
+            if crop.size == 0:
+                continue
+            blur = float(cv2.Laplacian(
+                cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var())
+            if blur < _MIN_SHARPNESS:
+                continue
 
-            # 6. Fire alert if unknown + tracker cooldown OK + encoding dedup OK
-            if not is_known and cooldown_ok:
-                if not _is_duplicate_alert(encoding):
-                    tracker.mark_alerted(tid)
-                    _register_alert_encoding(encoding)
-                    _fire_alert_async(frame.copy(), x1, y1, x2, y2)
+            # Gate 5: zone check — use RA zone points, NOT FR zone manager
+            if not _is_in_zone(x, y, w, h, zone_pts, fw, fh):
+                continue
+
+            # ── ArcFace encode ───────────────────────────────────────────────
+            aligned = arcface.align_face(frame, landmarks)
+            if aligned is None:
+                continue
+            embedding = arcface.get_embedding(aligned)
+            if embedding is None:
+                continue
+
+            # ── Match: RA authorised → FR blacklist → unknown ────────────────
+            person_type, matched_name = _match(embedding)
+
+            if person_type == "authorized":
+                color = (0, 220, 80)
+                label = matched_name
+            elif person_type == "blacklist":
+                color = (0, 0,220)
+                label = f"⚠ BLACKLIST: {matched_name}"
+            else:
+                color = (0, 120, 255)
+                label = "UNKNOWN ⚠"
+
+            results.append({
+                "box":         (x, y, x + w, y + h),
+                "label":       label,
+                "color":       color,
+                "person_type": person_type,
+            })
+
+            # ── Fire alert for intruders ─────────────────────────────────────
+            if person_type in ("unknown", "blacklist"):
+                _handle_intruder(
+                    frame, x, y, w, h,
+                    camera_source, zone_id, person_type, matched_name
+                )
+
+        # Age-out stale slots
+        _tick_slots()
 
     except Exception as e:
         print(f"[restricted_area] process_frame error: {e}")
 
-    return frame
+    return results
 
 
-# ── Private helpers ───────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+#  PRIVATE HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
 
-def _get_encoding_from_crop(bgr_crop: np.ndarray) -> np.ndarray | None:
-    """Convert a BGR person crop → 128-d face encoding, or None."""
+def _is_in_zone(x: int, y: int, w: int, h: int,
+                zone_pts: list, fw: int, fh: int) -> bool:
+    """Point-in-polygon test using face centre and RA zone points."""
+    if not zone_pts or len(zone_pts) < 3:
+        return False  # Strict mode: must be inside a valid zone
+    cx = float(x + w / 2)
+    cy = float(y + h / 2)
+    pixel_pts = [(int(p["x"] * fw), int(p["y"] * fh)) for p in zone_pts]
+    polygon = np.array([[px, py] for px, py in pixel_pts], dtype=np.int32)
+    result = cv2.pointPolygonTest(
+        polygon.reshape((-1, 1, 2)), (cx, cy), measureDist=False
+    )
+    return result >= 0
+
+
+def _match(embedding: np.ndarray) -> tuple:
+    """
+    Returns (person_type, name):
+        ("authorized", name) — RA authorized person
+        ("blacklist",  name) — FR blacklist person (critical alert)
+        ("unknown", "Unknown") — unrecognized intruder
+    """
+    # 1. Check RA authorized persons first
+    if _ra_encodings:
+        sims      = arcface.compute_similarities(_ra_encodings, embedding)
+        distances = [1.0 - s if s != -1.0 else 2.0 for s in sims]
+        best_idx  = int(np.argmin(distances))
+        if distances[best_idx] <= _DISTANCE_THRESHOLD:
+            return "authorized", _ra_names[best_idx]
+
+    # 2. Check FR blacklist encodings
     try:
-        rgb = cv2.cvtColor(bgr_crop, cv2.COLOR_BGR2RGB)
-        locs = face_recognition.face_locations(rgb, model="hog")
-        if not locs:
-            return None
-        encs = face_recognition.face_encodings(rgb, locs)
-        return encs[0] if encs else None
-    except Exception:
-        return None
+        from models.face_recognition.face_recognition_model import (
+            known_encodings, known_names, known_types,
+        )
+        bl_encs  = [e for e, t in zip(known_encodings, known_types) if t == "blacklist"]
+        bl_names = [n for n, t in zip(known_names,    known_types) if t == "blacklist"]
+        if bl_encs:
+            sims      = arcface.compute_similarities(bl_encs, embedding)
+            distances = [1.0 - s if s != -1.0 else 2.0 for s in sims]
+            best_idx  = int(np.argmin(distances))
+            if distances[best_idx] <= _DISTANCE_THRESHOLD:
+                return "blacklist", bl_names[best_idx]
+    except Exception as e:
+        print(f"[ra._match] blacklist check error: {e}")
+
+    return "unknown", "Unknown"
 
 
-def _is_duplicate_alert(encoding: np.ndarray) -> bool:
-    """
-    Check if this face encoding was already logged recently.
-    Compares against _recent_alerts using distance + time window.
-    Also garbage-collects expired entries.
-    """
-    global _recent_alerts
-    now = time.time()
-
-    # Purge stale entries (older than cooldown)
-    _recent_alerts = [e for e in _recent_alerts if (now - e["time"]) < _DEDUP_COOLDOWN]
-
-    # Compare encoding against all recent alerts
-    for entry in _recent_alerts:
-        dist = float(np.linalg.norm(encoding - entry["encoding"]))
-        if dist < _DEDUP_MATCH_DIST:
-            return True   # same person, still within cooldown → duplicate
-
-    return False
+def _iou(bA, bB) -> float:
+    xA = max(bA[0], bB[0]);  yA = max(bA[1], bB[1])
+    xB = min(bA[0]+bA[2], bB[0]+bB[2])
+    yB = min(bA[1]+bA[3], bB[1]+bB[3])
+    inter = max(0, xB-xA) * max(0, yB-yA)
+    union = bA[2]*bA[3] + bB[2]*bB[3] - inter
+    return inter / (union + 1e-5)
 
 
-def _register_alert_encoding(encoding: np.ndarray) -> None:
-    """Record this encoding so future frames can detect duplicates."""
-    _recent_alerts.append({"encoding": encoding.copy(), "time": time.time()})
+def _find_or_create_slot(x: int, y: int, w: int, h: int) -> int:
+    """IoU-based slot matching — each unique face gets its own slot."""
+    box = (x, y, w, h)
+    best_iou, best_idx = 0.0, -1
+    for i, slot in enumerate(_slots):
+        iou = _iou(box, slot["box"])
+        if iou > best_iou:
+            best_iou, best_idx = iou, i
+
+    if best_idx != -1 and best_iou > 0.20:
+        _slots[best_idx]["box"] = box
+        _slots[best_idx]["age"] = 0
+        return best_idx
+
+    # New slot — separate event_id per unknown person
+    _slots.append({
+        "box":        box,
+        "age":        0,
+        "event_id":   uuid.uuid4().hex[:10],
+        "last_alert": 0.0,
+    })
+    return len(_slots) - 1
 
 
-def _fire_alert_async(frame_copy: np.ndarray,
-                      x1: int, y1: int, x2: int, y2: int) -> None:
-    """Save snapshot + log to MongoDB in a daemon thread."""
+def _handle_intruder(frame: np.ndarray, x: int, y: int, w: int, h: int,
+                     camera_source: str, zone_id: str,
+                     person_type: str, name: str = "Unknown"):
+    """Per-slot cooldown → fire alert for unknown/blacklist intruders."""
+    idx  = _find_or_create_slot(x, y, w, h)
+    slot = _slots[idx]
+    now  = time.monotonic()
+
+    cooldown = _BL_ALERT_COOLDOWN if person_type == "blacklist" else _ALERT_COOLDOWN
+    if (now - slot["last_alert"]) < cooldown:
+        return
+
+    slot["last_alert"] = now
+    evt = slot["event_id"]
+    cnt = _alert_counts.get(evt, 0)
+    max_snaps = 8 if person_type == "blacklist" else 5
+    if cnt >= max_snaps:
+        return
+    _alert_counts[evt] = cnt + 1
+
+    _fire_alert_async(
+        frame.copy(), x, y, w, h,
+        evt, camera_source, zone_id, person_type, name
+    )
+
+
+def _fire_alert_async(frame_copy: np.ndarray, x: int, y: int, w: int, h: int,
+                      event_id: str, camera_source: str, zone_id: str,
+                      person_type: str, name: str):
+    """Save snapshot + write to RA DB in daemon thread."""
     def _worker():
         try:
-            ts         = int(time.time())
-            filename   = f"intruder_{ts}.jpg"
-            filepath   = os.path.join(_ALERTS_DIR, filename)
-            db_path    = f"static/alerts/{filename}"
+            fh, fw = frame_copy.shape[:2]
+            pad_w  = int(w * 0.15); pad_h = int(h * 0.20)
+            x1 = max(0, x - pad_w); y1 = max(0, y - pad_h)
+            x2 = min(fw, x + w + pad_w); y2 = min(fh, y + h + pad_h)
+            crop = frame_copy[y1:y2, x1:x2]
+            if crop.size == 0:
+                return
 
-            # Save only the person crop (not full frame)
-            crop = frame_copy[max(0, y1):y2, max(0, x1):x2]
-            if crop.size > 0:
-                cv2.imwrite(filepath, crop)
+            sub      = "blacklist" if person_type == "blacklist" else "unknown"
+            snap_dir = _RA_SNAP_BL  if person_type == "blacklist" else _RA_SNAP_UNKNOWN
+            fname    = f"ra_{sub}_{event_id}_{uuid.uuid4().hex[:6]}.jpg"
+            fpath    = os.path.join(snap_dir, fname)
+            snap_path = f"static/restricted_area/{sub}/{fname}"
 
-            log_alert(db_path, status="unknown")
-            print(f"[restricted_area] Alert saved → {filepath}")
+            ok = cv2.imwrite(fpath, crop, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+            if not ok:
+                print(f"[restricted_area] imwrite failed: {fpath}")
+                return
+
+            upsert_ra_event(event_id, camera_source, zone_id, snap_path, person_type, name)
+            insert_ra_alert(event_id, snap_path, camera_source, zone_id, person_type, name)
+            print(f"[restricted_area] {person_type.upper()} alert → {snap_path}")
         except Exception as e:
-            print(f"[restricted_area] Alert worker error: {e}")
+            print(f"[restricted_area] alert worker error: {e}")
 
-    t = threading.Thread(target=_worker, daemon=True)
-    t.start()
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _tick_slots():
+    """Age slots; remove stale ones (unseen > 25 frames)."""
+    for s in _slots:
+        s["age"] += 1
+    _slots[:] = [s for s in _slots if s["age"] < 25]
