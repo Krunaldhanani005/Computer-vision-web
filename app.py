@@ -418,44 +418,57 @@ def clear_training():
 
 @app.route("/api/fr/recognized")
 def api_recognized():
-    from models.face_recognition.fr_database import get_recognized_dashboard
-    return jsonify(get_recognized_dashboard())
+    from models.face_recognition.fr_database import get_known_dashboard
+    docs, total = get_known_dashboard()
+    return jsonify({"data": docs, "total": total})
 
 
 @app.route("/api/fr/unknown")
 def api_unknown():
     from models.face_recognition.fr_database import get_unknown_dashboard
-    return jsonify(get_unknown_dashboard())
+    docs, total = get_unknown_dashboard()
+    return jsonify({"data": docs, "total": total})
 
 
 @app.route("/api/fr/alerts")
 def api_alerts():
-    from models.face_recognition.fr_database import get_alerts_dashboard
-    return jsonify(get_alerts_dashboard())
+    from models.face_recognition.fr_database import get_blacklist_dashboard
+    docs, total = get_blacklist_dashboard()
+    return jsonify({"data": docs, "total": total})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  FACE RECOGNITION STREAM  (polygon zone-aware)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _fr_async_task(orig_frame: np.ndarray, frame_w: int, frame_h: int):
+def _fr_async_task(orig_frame: np.ndarray, frame_w: int, frame_h: int,
+                   zone_snapshot: list):
     """
     Background recognition task.
-    Pipeline: detect → quality gate → align → normalize → embed → match
 
-    Quality gates (all must pass before recognition):
-      1. Detection confidence >= 0.42  (allows medium-far faces)
-      2. Face size >= 50x50 px         (allows far faces ~50px)
-      3. Valid 5-point landmarks        (strongest non-face filter)
-      4. Face aspect ratio 0.4 – 2.2   (wider range for side angles)
-      5. Sharpness (Laplacian) >= 12   (far faces are naturally less sharp)
+    zone_snapshot: copy of active zone points captured at submission time.
+        Using a snapshot (not re-reading zone_manager inside the task) prevents
+        a race where the zone is cleared while the task is in-flight.
+
+    Quality gates (all must pass):
+      1. Detection confidence >= 0.42
+      2. Face size >= 50x50 px
+      3. Valid 5-point landmarks
+      4. Face aspect ratio 0.4–2.0
+      5. Sharpness (Laplacian) >= 12
+      6. Skin-tone ratio >= 15%  (eliminates glass/furniture CCTV false positives)
+      7. (zone snapshot guard)
+      8. Face centre inside zone polygon
     """
     from models.face_recognition.face_detector import detect_faces_multiscale
 
     results = []
 
-    # ── Step 1: Multi-scale face detection ──────────────────────────────────
-    face_boxes = detect_faces_multiscale(orig_frame, min_size=50)
+    # No zone at snapshot time → task should not have been submitted, but guard anyway
+    if zone_snapshot is None or len(zone_snapshot) < 3:
+        return results
+
+    face_boxes = detect_faces_multiscale(orig_frame, min_size=20)
 
     for face_data in face_boxes:
         if len(face_data) < 5:
@@ -465,56 +478,64 @@ def _fr_async_task(orig_frame: np.ndarray, frame_w: int, frame_h: int):
         landmarks  = face_data[4]
         det_conf   = float(face_data[5]) if len(face_data) >= 6 else 0.5
 
-        # ── Gate 1: Detection confidence (0.42 allows far/medium faces) ──────
+        # Gate 1: detection confidence — raised to 0.42 to suppress low-score CCTV FPs
         if det_conf < 0.42:
-            print(f"[fr_async] Reject conf={det_conf:.2f} < 0.42  ({w}x{h})")
             continue
 
-        # ── Gate 2: Minimum face size (50px covers far faces) ─────────────────
+        # Gate 2: minimum face size for recognition quality
         if w < 50 or h < 50:
-            print(f"[fr_async] Reject size={w}x{h} < 50px")
             continue
 
-        # ── Gate 3: Valid landmarks (strongest non-face filter) ──────────────
+        # Gate 3: valid landmarks (strongest false-positive filter)
         if landmarks is None:
-            print(f"[fr_async] Reject: no valid landmarks ({w}x{h})")
             continue
 
-        # ── Gate 4: Face aspect ratio (wider range for side/far angles) ───────
+        # Gate 4: aspect ratio
         aspect = w / (h + 1e-5)
-        if aspect < 0.4 or aspect > 2.2:
-            print(f"[fr_async] Reject: bad aspect {aspect:.2f}  ({w}x{h})")
+        if aspect < 0.4 or aspect > 2.0:
             continue
 
-        # ── Gate 5: Sharpness (far faces are naturally less sharp) ────────────
+        # Gate 5: sharpness + crop extraction (used by Gate 6 too)
         fh_f, fw_f = orig_frame.shape[:2]
         x1c, y1c   = max(0, x), max(0, y)
         x2c, y2c   = min(fw_f, x + w), min(fh_f, y + h)
         face_crop  = orig_frame[y1c:y2c, x1c:x2c]
-        blur_score = 0.0
-        if face_crop.size > 0:
-            gray_crop  = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
-            blur_score = float(cv2.Laplacian(gray_crop, cv2.CV_64F).var())
-            if blur_score < 12.0:
-                print(f"[fr_async] Reject: blur={blur_score:.1f} < 12  ({w}x{h})")
-                continue
-
-        print(
-            f"[fr_async] PASS: conf={det_conf:.2f} size={w}x{h} "
-            f"aspect={aspect:.2f} sharpness={blur_score:.1f}"
-        )
-
-        # ── Face-center zone check ───────────────────────────────────────────
-        if not zone_manager.is_face_inside_normalised((x, y, w, h), frame_w, frame_h):
+        if face_crop.size == 0:
+            continue
+        gray_crop  = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
+        blur_score = float(cv2.Laplacian(gray_crop, cv2.CV_64F).var())
+        if blur_score < 12.0:
             continue
 
-        # ── Step 2: Recognize face ───────────────────────────────────────────
-        raw_name, p_type, conf, dist = recognize(orig_frame, face_data)
+        # Gate 6: skin-tone filter — eliminates glass, furniture, signage false positives.
+        # YCrCb range covers dark to fair skin under normal and IR-assisted colour cameras.
+        # Real faces need >= 15% skin-coloured pixels; glass/wood/walls score near 0%.
+        ycrcb_crop = cv2.cvtColor(face_crop, cv2.COLOR_BGR2YCrCb)
+        skin_mask  = cv2.inRange(
+            ycrcb_crop,
+            np.array([0,   133,  77], dtype=np.uint8),
+            np.array([255, 173, 127], dtype=np.uint8),
+        )
+        skin_ratio = float(np.count_nonzero(skin_mask)) / max(skin_mask.size, 1)
+        if skin_ratio < 0.15:
+            continue
 
+        # Gate 8: face centre inside zone (using snapshot — no live zone_manager read)
+        from zone_manager import zone_manager as _zm
+        if not _zm.is_face_inside_zone((x, y, w, h),
+                                       [(int(p["x"] * frame_w), int(p["y"] * frame_h))
+                                        for p in zone_snapshot]):
+            continue
+
+        # Recognize — returns (name, type, conf, dist, embedding)
+        raw_name, p_type, conf, dist, emb = recognize(orig_frame, face_data)
+
+        zone_id = "Monitoring Zone"
         smooth_name, smooth_type, smooth_conf = _identity_tracker.update(
-            x, y, w, h, raw_name, p_type, conf, orig_frame, landmarks=landmarks,
+            x, y, w, h, raw_name, p_type, conf, orig_frame,
+            landmarks=landmarks, embedding=emb,
             camera_source=camera_source_config.get("type", "webcam"),
-            zone_id="Monitoring Zone" if zone_manager.load_zone() else "Default"
+            zone_id=zone_id,
         )
 
         results.append({
@@ -608,8 +629,8 @@ _fr_fast_tracker = FastTracker()
 def generate_fr_frames():
     """MJPEG generator — polygon zone-aware face recognition stream."""
     global is_fr_streaming, fr_future, fr_last_results
-    _fr_skip = 0          # Frame-skip counter
-    _FR_PROCESS_EVERY = 2  # Process every 2nd frame
+    _fr_skip = 0
+    _FR_PROCESS_EVERY = 1   # Optimized frame skipping for live performance (process every frame)
 
     while is_fr_streaming:
         frame = camera_manager.get_latest_frame()
@@ -622,11 +643,11 @@ def generate_fr_frames():
         zone_points = zone_manager.load_zone()
 
         if zone_points is None:
+            # NO ZONE = NO DETECTION
             fr_last_results = []
             _fr_fast_tracker.trackers = []
             _fr_skip = 0
         else:
-            # Submit background recognition every Nth frame
             _fr_skip = (_fr_skip + 1) % _FR_PROCESS_EVERY
             if _fr_skip == 0 and (fr_future is None or fr_future.done()):
                 if fr_future is not None:
@@ -636,9 +657,10 @@ def generate_fr_frames():
                             _fr_fast_tracker.init_from_results(frame, res)
                     except Exception as e:
                         print(f"[fr_async_task] Error: {e}")
-                
+
+                # Pass zone snapshot so the task doesn't need to re-read zone_manager
                 fr_future = fr_executor.submit(
-                    _fr_async_task, frame.copy(), fw, fh
+                    _fr_async_task, frame.copy(), fw, fh, list(zone_points)
                 )
             elif fr_future is not None and fr_future.done() and not _fr_fast_tracker.trackers:
                 try:
@@ -854,6 +876,11 @@ def generate_restricted_frames():
     _ra_skip = 0
     _RA_PROCESS_EVERY = 2
 
+    # Cache zone locally — reload every 5 s instead of every frame
+    _ra_zone_cache     = load_ra_zone("restricted_default")
+    _ra_zone_reload_ts = time.monotonic()
+    _RA_ZONE_REFRESH   = 5.0
+
     while is_restricted_streaming:
         frame = ra_camera_manager.get_latest_frame()   # ← dedicated RA camera
         if frame is None:
@@ -862,7 +889,13 @@ def generate_restricted_frames():
         frame = frame.copy()
         fh, fw = frame.shape[:2]
 
-        ra_z_pts = load_ra_zone("restricted_default")
+        # Refresh zone cache every 5 s (picks up save/delete without per-frame DB hit)
+        _now = time.monotonic()
+        if (_now - _ra_zone_reload_ts) >= _RA_ZONE_REFRESH:
+            _ra_zone_cache     = load_ra_zone("restricted_default", force=True)
+            _ra_zone_reload_ts = _now
+
+        ra_z_pts = _ra_zone_cache
 
         # ── Zone Required Gate ──────────────────────────────────────────────
         if ra_z_pts is None or len(ra_z_pts) < 3:

@@ -25,8 +25,10 @@ import os
 _BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 _MODEL_FILE = os.path.join(_BASE_DIR, "weights", "face_detection_yunet.onnx")
 
-_SCORE_THRESHOLD = 0.38   # balanced: recalls far/medium faces; downstream gates filter FPs
-_NMS_THRESHOLD   = 0.25   # was 0.30 — tighter internal NMS
+# Lowered to 0.35: better recall for far/side/medium faces; quality gates downstream filter FPs
+_SCORE_THRESHOLD = 0.35
+# Raised to 0.40: allows nearby faces to survive YuNet internal NMS (multi-face fix)
+_NMS_THRESHOLD   = 0.40
 _TOP_K           = 5000
 
 _yunet_model = None
@@ -113,7 +115,8 @@ def _validate_landmarks(x: int, y: int, w: int, h: int, lm: list) -> bool:
         1 for i in range(5)
         if x_lo <= lm[2 * i] <= x_hi and y_lo <= lm[2 * i + 1] <= y_hi
     )
-    return valid >= 3
+    # Require 4/5 landmarks inside padded box — filters non-face objects reliably
+    return valid >= 4
 
 
 # ── Core detection ────────────────────────────────────────────────────────────
@@ -202,62 +205,56 @@ def clear_detector_state():
 
 # ── Multi-scale detection ─────────────────────────────────────────────────────
 
-def detect_faces_multiscale(frame: np.ndarray, min_size: int = 20) -> list:
+def detect_faces_multiscale(frame: np.ndarray, min_size: int = 40) -> list:
     """
-    Three-scale face detection for robust recall across distances.
-
-    Scales 1.0×, 1.5×, 2.0× cover:
-        1.0× — close / large faces (webcam, near CCTV)
-        1.5× — medium-distance faces (typical walking person crop)
-        2.0× — small / far faces (CCTV crowd scenes)
-
-    Scale cap: max dimension capped at 1280 px to prevent lag on large crops.
-    Cross-scale duplicates removed by NMS (IoU ≥ 0.35, highest-conf wins).
-
-    Returns: list of (x, y, w, h, landmarks_or_None, conf) in ORIGINAL coords.
+    Improved detection: scale frame to 1280px max dimension for high recall,
+    single pass for live performance.
     """
     if _yunet_model is None:
         return []
 
-    h, w       = frame.shape[:2]
-    all_faces: list = []
+    h, w = frame.shape[:2]
+    
+    # Improve detector resolution to 1280
+    target_max = 1280
+    scale = 1.0
+    if max(w, h) != target_max:
+        scale = target_max / max(w, h)
+        nw = int(w * scale)
+        nh = int(h * scale)
+        scaled = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
+    else:
+        scaled = frame
 
-    for scale in (1.0, 1.5, 2.0):
-        actual_scale = scale
-        if scale > 1.0:
-            nw = int(w * scale)
-            nh = int(h * scale)
-            # Cap so no dimension exceeds 1280 px — keeps per-frame time bounded
-            if max(nw, nh) > 1280:
-                actual_scale = 1280 / max(w, h)
-                nw = int(w * actual_scale)
-                nh = int(h * actual_scale)
-            scaled = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
-        else:
-            scaled = frame
+    faces = get_faces_dnn(scaled, smooth=False, min_size=int(min_size * scale))
+    
+    all_faces = []
+    for face in faces:
+        x, y, fw, fh, lm, conf = face
+        
+        # Confidence threshold filter
+        if conf < 0.5:
+            continue
+            
+        # Aspect ratio validation
+        aspect = fw / float(fh + 1e-5)
+        if aspect < 0.5 or aspect > 2.0:
+            continue
 
-        scale_min = max(10, int(min_size * actual_scale))
-        faces     = get_faces_dnn(scaled, smooth=False, min_size=scale_min)
+        ox = int(x / scale)
+        oy = int(y / scale)
+        ow = max(1, int(fw / scale))
+        oh = max(1, int(fh / scale))
 
-        for face in faces:
-            x   = face[0];  y   = face[1]
-            fw  = face[2];  fh  = face[3]
-            lm  = face[4];  conf = face[5]
+        if ow < min_size or oh < min_size:
+            continue
 
-            ox = int(x  / actual_scale)
-            oy = int(y  / actual_scale)
-            ow = max(min_size, int(fw / actual_scale))
-            oh = max(min_size, int(fh / actual_scale))
-            orig_lm = ([v / actual_scale for v in lm] if lm is not None else None)
+        orig_lm = ([v / scale for v in lm] if lm is not None else None)
+        all_faces.append((ox, oy, ow, oh, orig_lm, conf))
 
-            all_faces.append((ox, oy, ow, oh, orig_lm, conf))
-
-    if not all_faces:
-        return []
-
-    # Confidence-sorted NMS — keeps best landmark set when boxes overlap
+    # NMS
     all_faces.sort(key=lambda f: f[5], reverse=True)
-    merged: list = []
+    merged = []
     for face in all_faces:
         keep = True
         for kept in merged:

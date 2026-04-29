@@ -63,40 +63,82 @@ except Exception as e:
 #  REGISTRATION & ENCODINGS
 # ══════════════════════════════════════════════════════════════════════════════
 
+_MAX_EMBEDDINGS_PER_PERSON = 10   # cap stored embeddings per person
+
+
 def insert_face(name: str, person_type: str, encoding: list) -> bool:
+    """
+    Store ArcFace embedding for a person.
+
+    Embeddings are kept in an array field ``encodings`` (max
+    _MAX_EMBEDDINGS_PER_PERSON). Multiple training images therefore each
+    contribute their own embedding, giving recognition a best-of-N match
+    instead of just the last uploaded sample.
+
+    Backward-compat: old documents with a single ``encoding`` field are
+    migrated to the array format on first write.
+    """
     try:
         now = datetime.datetime.utcnow()
-        if person_type == "blacklist":
-            col = blacklist_persons
-        else:
-            col = known_persons
+        col = blacklist_persons if person_type == "blacklist" else known_persons
 
         existing = col.find_one({"name": name})
         if existing:
-            # Update encoding
-            col.update_one({"name": name}, {"$set": {"encoding": encoding}})
+            current_encs = existing.get("encodings", [])
+            # Migrate legacy single-field documents on the fly
+            if not current_encs and existing.get("encoding"):
+                current_encs = [existing["encoding"]]
+
+            if len(current_encs) >= _MAX_EMBEDDINGS_PER_PERSON:
+                print(f"[fr_database] insert_face: {name} already has "
+                      f"{len(current_encs)} embeddings (cap={_MAX_EMBEDDINGS_PER_PERSON}), skipping")
+                return True  # not an error — person is already well represented
+
+            if not existing.get("encodings") and existing.get("encoding"):
+                # First write on a legacy doc — migrate single→array and append new
+                col.update_one(
+                    {"name": name},
+                    {"$set": {"encodings": current_encs + [encoding]},
+                     "$unset": {"encoding": ""}}
+                )
+            else:
+                col.update_one({"name": name}, {"$push": {"encodings": encoding}})
         else:
             col.insert_one({
-                "name": name,
+                "name":        name,
                 "person_type": person_type,
-                "encoding": encoding,
-                "created_at": now,
-                "status": "active",
-                "total_detections": 0
+                "encodings":   [encoding],   # array from the start
+                "created_at":  now,
+                "status":      "active",
+                "total_detections": 0,
             })
         return True
     except Exception as e:
         print(f"[fr_database] insert_face error: {e}")
         return False
 
+
 def get_all_faces():
+    """
+    Return one dict per stored embedding so the in-memory cache gets an entry
+    for every embedding, enabling best-of-N matching per person.
+
+    Handles both new (``encodings`` array) and legacy (``encoding`` scalar) docs.
+    """
     faces = []
-    if known_persons is not None:
-        for doc in known_persons.find({}, {"_id": 0, "name": 1, "person_type": 1, "encoding": 1}):
-            faces.append(doc)
-    if blacklist_persons is not None:
-        for doc in blacklist_persons.find({}, {"_id": 0, "name": 1, "person_type": 1, "encoding": 1}):
-            faces.append(doc)
+    for col in (known_persons, blacklist_persons):
+        if col is None:
+            continue
+        for doc in col.find({}, {"_id": 0, "name": 1, "person_type": 1,
+                                 "encodings": 1, "encoding": 1}):
+            name  = doc.get("name", "Unknown")
+            ptype = doc.get("person_type", "known")
+            encs  = doc.get("encodings", [])
+            # Backward-compat: single encoding field on old documents
+            if not encs and doc.get("encoding"):
+                encs = [doc["encoding"]]
+            for enc in encs:
+                faces.append({"name": name, "person_type": ptype, "encoding": enc})
     return faces
 
 def delete_all_faces() -> int:

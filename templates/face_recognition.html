@@ -325,6 +325,29 @@
     if (instr) instr.style.display = 'block';
   };
 
+  // Load existing FR zone from server on page init
+  (async function loadExistingZone() {
+    try {
+      const r = await fetch('/get_zone');
+      const j = await r.json();
+      if (j.zone && j.zone.length >= 3) {
+        points  = j.zone;
+        drawing = true;
+        initCanvas('fr');
+        // Lock canvas — zone already saved
+        if (canvas) canvas.onclick = null;
+        drawing = false;
+        const instr = document.getElementById('zone-instructions');
+        if (instr) instr.style.display = 'none';
+        const gs = document.getElementById('global-status');
+        if (gs) { gs.textContent = `Zone loaded (${points.length} pts). Recognition active.`; gs.className = 'status-box success'; }
+        // Show zone controls so user can delete/redo
+        const ctrl = document.getElementById('fr-zone-controls');
+        if (ctrl) ctrl.style.display = 'flex';
+      }
+    } catch(e) {}
+  })();
+
   window.saveZone = async function(prefix) {
     if (points.length < 3) {
       alert('Draw at least 3 points to form a polygon zone.');

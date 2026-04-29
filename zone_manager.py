@@ -116,12 +116,16 @@ class ZoneManager:
 
     def is_face_inside_normalised(self, face_rect: tuple, frame_w: int, frame_h: int) -> bool:
         """
-        Convenience: test face_rect (pixel) against the active normalised polygon.
-        Converts zone points to pixel coords first.
+        Test face_rect (pixel coords) against the active normalised polygon.
+
+        Strict mode: returns False when no zone is set.
+        The generator already gates task submission on zone existence, so this
+        path (pts is None) is only reached in a narrow race window — returning
+        False is the safe / correct behaviour (NO ZONE = NO DETECTION).
         """
         pts = self.active_points
         if pts is None:
-            return True   # No zone -> inside by default
+            return False   # NO ZONE → NO DETECTION (strict enforcement)
 
         pixel_pts = [(int(p["x"] * frame_w), int(p["y"] * frame_h)) for p in pts]
         return self.is_face_inside_zone(face_rect, pixel_pts)

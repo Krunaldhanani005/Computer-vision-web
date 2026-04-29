@@ -28,7 +28,6 @@ import numpy as np
 # ── Shared models (detection + recognition; data stored separately) ─────────
 from models.face_recognition.face_detector import detect_faces_multiscale
 from models.face_recognition import arcface
-from models.face_recognition.face_recognition_model import normalize_face
 
 # ── RA-specific database ─────────────────────────────────────────────────────
 from .database import (
@@ -45,17 +44,20 @@ _RA_SNAP_BL      = os.path.join(_RA_SNAP_ROOT, "blacklist")
 for _d in [_RA_SNAP_ROOT, _RA_SNAP_UNKNOWN, _RA_SNAP_BL]:
     os.makedirs(_d, exist_ok=True)
 
-# ── Quality gate parameters ───────────────────────────────────────────────────
-_MIN_CONF      = 0.35   # YuNet detection confidence
+# ── Quality gate parameters (aligned with FR system) ─────────────────────────
+_MIN_CONF      = 0.42   # YuNet detection confidence (same as FR)
 _MIN_FACE_SIZE = 50     # px
-_MIN_SHARPNESS = 10.0   # Laplacian variance
+_MIN_SHARPNESS = 12.0   # Laplacian variance (same as FR)
 
-# ── Recognition threshold (cosine distance) ───────────────────────────────────
-_DISTANCE_THRESHOLD = 0.50
+# ── Recognition threshold (cosine distance, same as FR) ──────────────────────
+_DISTANCE_THRESHOLD = 0.48
 
 # ── Alert cooldown per slot ───────────────────────────────────────────────────
 _ALERT_COOLDOWN    = 30.0   # seconds between repeat unknown alerts
 _BL_ALERT_COOLDOWN = 15.0   # shorter cooldown for blacklist (critical)
+
+# ── Minimum consecutive detections before first alert (prevents single-frame FP) ──
+_MIN_CONFIRM = 3
 
 # ── In-memory RA authorised persons ──────────────────────────────────────────
 _ra_names:     list = []
@@ -120,7 +122,12 @@ def process_frame(frame: np.ndarray,
             if landmarks is None:
                 continue
 
-            # Gate 4: sharpness
+            # Gate 4: aspect ratio (same range as FR — filters tilted/skewed detections)
+            aspect = w / (h + 1e-5)
+            if aspect < 0.4 or aspect > 2.2:
+                continue
+
+            # Gate 5: sharpness
             x1c = max(0, x);    y1c = max(0, y)
             x2c = min(fw, x+w); y2c = min(fh, y+h)
             crop = frame[y1c:y2c, x1c:x2c]
@@ -257,10 +264,11 @@ def _find_or_create_slot(x: int, y: int, w: int, h: int) -> int:
 
     # New slot — separate event_id per unknown person
     _slots.append({
-        "box":        box,
-        "age":        0,
-        "event_id":   uuid.uuid4().hex[:10],
-        "last_alert": 0.0,
+        "box":           box,
+        "age":           0,
+        "event_id":      uuid.uuid4().hex[:10],
+        "last_alert":    0.0,
+        "confirm_count": 0,   # consecutive detections; must reach _MIN_CONFIRM before alerting
     })
     return len(_slots) - 1
 
@@ -268,10 +276,15 @@ def _find_or_create_slot(x: int, y: int, w: int, h: int) -> int:
 def _handle_intruder(frame: np.ndarray, x: int, y: int, w: int, h: int,
                      camera_source: str, zone_id: str,
                      person_type: str, name: str = "Unknown"):
-    """Per-slot cooldown → fire alert for unknown/blacklist intruders."""
+    """Per-slot cooldown + confirmation gate → fire alert for unknown/blacklist intruders."""
     idx  = _find_or_create_slot(x, y, w, h)
     slot = _slots[idx]
     now  = time.monotonic()
+
+    # Require _MIN_CONFIRM consecutive detections before first alert (blocks single-frame FP)
+    slot["confirm_count"] = slot.get("confirm_count", 0) + 1
+    if slot["confirm_count"] < _MIN_CONFIRM:
+        return
 
     cooldown = _BL_ALERT_COOLDOWN if person_type == "blacklist" else _ALERT_COOLDOWN
     if (now - slot["last_alert"]) < cooldown:

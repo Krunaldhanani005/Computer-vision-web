@@ -10,13 +10,14 @@ Features:
 """
 
 import cv2
+import os
 import threading
 import time
 
 
 # Reconnect settings for CCTV/RTSP streams
-MAX_RECONNECT_ATTEMPTS = 10      # total retries before giving up
-RECONNECT_DELAY_SEC    = 3.0     # wait between retries
+MAX_RECONNECT_ATTEMPTS = 10
+RECONNECT_DELAY_SEC    = 2.0    # reduced from 3.0 — faster recovery on RTSP drop
 
 
 class CameraManager:
@@ -85,23 +86,25 @@ class CameraManager:
     # ── Capture factory ───────────────────────────────────────────────────────
 
     def _open_capture(self, source) -> cv2.VideoCapture:
-        """
-        Open a VideoCapture with source-appropriate settings.
-        Returns a VideoCapture object (may not be opened on failure).
-        """
-        cap = cv2.VideoCapture(source)
+        """Open a VideoCapture with source-appropriate settings."""
+        is_rtsp = isinstance(source, str) and not source.isdigit()
 
-        if isinstance(source, int) or (isinstance(source, str) and source.isdigit()):
-            # Webcam — request moderate resolution and minimal buffer
+        if is_rtsp:
+            # Force TCP transport for RTSP — more stable than UDP on LAN/WiFi.
+            # Must be set before VideoCapture() opens the connection.
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+                "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay"
+            )
+            cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+            # Reset env var so other non-RTSP captures are unaffected
+            os.environ.pop("OPENCV_FFMPEG_CAPTURE_OPTIONS", None)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        else:
+            cap = cv2.VideoCapture(source)
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             cap.set(cv2.CAP_PROP_FPS, 30)
-        else:
-            # RTSP / HTTP stream — minimise internal buffer for low latency
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            # Use FFMPEG backend for better RTSP support (if available)
-            # cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'H264'))
 
         return cap
 

@@ -14,7 +14,6 @@ Cooldown:
 import cv2
 import numpy as np
 from . import arcface
-import datetime
 import os
 import uuid
 from threading import Thread
@@ -25,7 +24,6 @@ from .face_detector import get_faces_dnn
 from .fr_database import (
     insert_face,
     get_all_faces,
-    delete_all_faces,
     upsert_known,
     upsert_unknown,
     insert_alert,
@@ -48,8 +46,9 @@ for _d in [_SNAP_DIR, _REPORT_DIR, _DIR_KNOWN, _DIR_UNKNOWN, _DIR_BLACKLIST]:
     os.makedirs(_d, exist_ok=True)
 
 # ── Recognition parameters ────────────────────────────────────────────────────
-# Calibrated for real-world CCTV. Cosine distance (1 - similarity)
-DISTANCE_THRESHOLD = 0.48    # <= this → Known match. Allow tuning if needed.
+# Cosine distance (1 - cosine_similarity). Lowered 0.48→0.45 to reduce
+# known-as-unknown errors now that multiple embeddings are stored per person.
+DISTANCE_THRESHOLD = 0.45
 
 # ── In-memory encoding cache ──────────────────────────────────────────────────
 known_encodings: list = []
@@ -123,6 +122,11 @@ def _validate_face_for_save(frame: np.ndarray, box) -> tuple:
     # Minimum face size gate
     if w < _MIN_SAVE_W or h < _MIN_SAVE_H:
         return False, 0.0, f"too_small ({w}x{h})"
+        
+    # Aspect ratio validation
+    aspect = w / float(h + 1e-5)
+    if aspect < 0.5 or aspect > 2.0:
+        return False, 0.0, f"bad_aspect_ratio ({aspect:.2f})"
 
     x1, y1 = max(0, x), max(0, y)
     x2, y2 = min(fw, x + w), min(fh, y + h)
@@ -132,23 +136,16 @@ def _validate_face_for_save(frame: np.ndarray, box) -> tuple:
 
     gray = cv2.cvtColor(raw, cv2.COLOR_BGR2GRAY)
     sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    
+    if sharpness < _MIN_SHARPNESS:
+        return False, sharpness, f"too_blurry ({sharpness:.1f})"
+        
     return True, sharpness, "ok"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  SNAPSHOT HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
-
-# Per-identity frame buffer: key → {'frames': [(sharpness, frame, box)], 'ts': t}
-_FRAME_BUFFER: dict = {}
-_FRAME_BUFFER_MAX_FRAMES = 5
-_FRAME_BUFFER_MAX_SECS   = 3.0
-
-
-def _collect_best_frame(key: str, frame: np.ndarray, box, sharpness: float) -> tuple:
-    """Buffer removed. Immediate return for detection-first approach."""
-    return frame.copy(), box
-
 
 def _crop_face(frame: np.ndarray, box, landmarks=None):
     """
@@ -165,9 +162,10 @@ def _crop_face(frame: np.ndarray, box, landmarks=None):
     x, y, w, h = box
     fh, fw = frame.shape[:2]
     
-    pad_w = int(w * 0.15)
-    pad_top = int(h * 0.20)
-    pad_bot = int(h * 0.10)
+    # Expanded padding to capture full face and prevent partial crops
+    pad_w = int(w * 0.3)
+    pad_top = int(h * 0.4)
+    pad_bot = int(h * 0.2)
 
     x1 = max(0, x - pad_w)
     y1 = max(0, y - pad_top)
@@ -222,13 +220,15 @@ def _save_snapshot(frame: np.ndarray, box, label: str, folder: str = None, landm
 
 
 def _save_snapshot_relaxed(frame: np.ndarray, box, label: str, folder: str = None, landmarks: list = None) -> str:
-    """Relaxed save for Unknown — never rejects on quality, only on absolute size."""
+    """Relaxed save for Unknown — validates before saving snapshot."""
     try:
+        valid, sharpness, reason = _validate_face_for_save(frame, box)
+        if not valid:
+            print(f"[snapshot-unk] Rejected ({reason}) label={label}")
+            return ""
+        
         x, y, w, h = box
         fh, fw = frame.shape[:2]
-        if w < 25 or h < 25:
-            print(f"[snapshot-unk] Skip: too tiny ({w}x{h})")
-            return ""
         crop = _crop_face(frame, box, landmarks)
         if crop is None:
             # Hard fallback: raw region resized to 160x160
@@ -263,7 +263,8 @@ def _log_known_async(name: str, person_type: str, confidence: float,
     Thread(target=worker, daemon=True).start()
 
 
-def _log_blacklist_async(name: str, frame: np.ndarray, box, landmarks=None, camera_source="webcam", zone_id="default"):
+def _log_blacklist_async(name: str, frame: np.ndarray, box, landmarks=None,
+                         camera_source="webcam", zone_id="default"):
     valid, sharpness, reason = _validate_face_for_save(frame, box)
     if not valid:
         print(f"[log-blacklist] Frame rejected ({reason}) for {name}")
@@ -393,58 +394,59 @@ def normalize_face(aligned_face: np.ndarray) -> np.ndarray:
 
 def recognize(frame: np.ndarray, face_data: tuple):
     """
-    Align face, generate ArcFace embedding, and compare against known_encodings.
-    face_data: (x, y, w, h, landmarks) OR (x, y, w, h, landmarks, conf)
-    Accepts both 5-element and 6-element tuples (detector returns 6 with conf).
-    """
-    if frame is None or frame.size == 0:
-        return "Unknown", "unknown", 0.0, 2.0
+    Align face, generate ArcFace embedding, compare against known_encodings.
 
-    # ── FIX: accept 5 OR 6 element tuples (detector returns 6: x,y,w,h,lm,conf) ──
+    face_data: (x, y, w, h, landmarks) OR (x, y, w, h, landmarks, conf)
+
+    Returns: (name, person_type, confidence, distance, embedding)
+        embedding is the raw ArcFace 512-d vector (L2-normalised) or None on failure.
+        Callers use the embedding for unknown-person grouping.
+    """
+    _no_match = ("Unknown", "unknown", 0.0, 2.0, None)
+
+    if frame is None or frame.size == 0:
+        return _no_match
+
     if len(face_data) < 5:
         print(f"[recognize] ERROR: face_data too short (len={len(face_data)}), need >=5")
-        return "Unknown", "unknown", 0.0, 2.0
+        return _no_match
 
     x, y, w, h, landmarks = face_data[0], face_data[1], face_data[2], face_data[3], face_data[4]
 
-    # ── Gate 1: Minimum face size (50px allows far faces) ──────────────────
+    # ── Gate 1: Minimum face size ──────────────────────────────────────────────
     if w < 50 or h < 50:
-        print(f"[recognize] Skip: face too small ({w}x{h} < 50px)")
-        return "Unknown", "unknown", 0.0, 2.0
+        return _no_match
 
     fh, fw = frame.shape[:2]
     face_crop_raw = frame[max(0, y):min(fh, y+h), max(0, x):min(fw, x+w)]
     if face_crop_raw.size == 0:
-        return "Unknown", "unknown", 0.0, 2.0
+        return _no_match
 
-    # ── Gate 2: Sharpness check (far faces have lower natural sharpness) ──────
-    gray_crop = cv2.cvtColor(face_crop_raw, cv2.COLOR_BGR2GRAY)
+    # ── Gate 2: Sharpness ─────────────────────────────────────────────────────
+    gray_crop  = cv2.cvtColor(face_crop_raw, cv2.COLOR_BGR2GRAY)
     blur_score = float(cv2.Laplacian(gray_crop, cv2.CV_64F).var())
     if blur_score < 8.0:
-        print(f"[recognize] Skip: too blurry (sharpness={blur_score:.1f} < 8)")
-        return "Unknown", "unknown", 0.0, 2.0
+        return _no_match
 
-    # ── Align and Encode with ArcFace ─────────────────────────────────────────
+    # ── ArcFace align + embed ─────────────────────────────────────────────────
     aligned = arcface.align_face(frame, landmarks)
     if aligned is None:
-        print(f"[recognize] WARNING: alignment failed for face {w}x{h} (landmarks={landmarks is not None})")
-        return "Unknown", "unknown", 0.0, 2.0
+        print(f"[recognize] WARNING: alignment failed for face {w}x{h}")
+        return _no_match
 
-    # Pass raw aligned face — no CLAHE/denoising (breaks ArcFace embedding space)
     new_enc = arcface.get_embedding(aligned)
     if new_enc is None:
         print(f"[recognize] ERROR: ArcFace embedding returned None")
-        return "Unknown", "unknown", 0.0, 2.0
+        return _no_match
 
     if not known_encodings:
-        print(f"[recognize] WARNING: No known encodings in memory — run training first!")
-        return "Unknown", "unknown", 0.0, 2.0
+        # No training data — return Unknown but keep embedding for unknown grouping
+        return "Unknown", "unknown", 0.0, 2.0, new_enc
 
-    # ── Compare against ALL stored encodings (exhaustive best-match) ──────────
+    # ── Compare against ALL stored embeddings (best-of-N per person) ──────────
     similarities = arcface.compute_similarities(known_encodings, new_enc)
-    distances = [1.0 - sim if sim != -1.0 else 2.0 for sim in similarities]
+    distances    = [1.0 - sim if sim != -1.0 else 2.0 for sim in similarities]
 
-    # Per-person best (minimum distance across all embeddings for that person)
     person_best: dict = {}
     for i, dist in enumerate(distances):
         nm = known_names[i]
@@ -452,10 +454,8 @@ def recognize(frame: np.ndarray, face_data: tuple):
         if nm not in person_best or dist < person_best[nm][0]:
             person_best[nm] = (float(dist), pt)
 
-    # Separate by type — Priority: Blacklist > Known
     blacklist_best = None
-    known_best = None
-
+    known_best     = None
     for nm, (dist, pt) in person_best.items():
         if pt == "blacklist":
             if blacklist_best is None or dist < blacklist_best[1]:
@@ -464,7 +464,6 @@ def recognize(frame: np.ndarray, face_data: tuple):
             if known_best is None or dist < known_best[1]:
                 known_best = (nm, dist, pt)
 
-    # ── Debug log ─────────────────────────────────────────────────────────────
     best_overall_name = "N/A"
     best_overall_dist = 2.0
     if person_best:
@@ -472,29 +471,25 @@ def recognize(frame: np.ndarray, face_data: tuple):
             person_best.items(), key=lambda kv: kv[1][0]
         )
     print(
-        f"[recognize] Face {w}x{h} | sharpness={blur_score:.1f} | "
-        f"best_match={best_overall_name} | dist={best_overall_dist:.3f} | "
-        f"threshold={DISTANCE_THRESHOLD} | encodings_in_db={len(known_encodings)}"
+        f"[recognize] Face {w}x{h} | blur={blur_score:.1f} | "
+        f"best={best_overall_name} | dist={best_overall_dist:.3f} | "
+        f"thr={DISTANCE_THRESHOLD} | encs={len(known_encodings)}"
     )
 
-    # 1. Blacklist check first
+    # Priority: blacklist > known > unknown
     if blacklist_best and blacklist_best[1] <= DISTANCE_THRESHOLD:
-        best_name, best_dist, best_type = blacklist_best
-        conf_score = max(0.0, 1.0 - best_dist)
-        print(f"[recognize] RESULT: BLACKLIST | name={best_name} | dist={best_dist:.3f} | conf={conf_score:.2f}")
-        return best_name, best_type, conf_score, best_dist
+        nm, d, pt = blacklist_best
+        print(f"[recognize] → BLACKLIST {nm} dist={d:.3f}")
+        return nm, pt, max(0.0, 1.0 - d), d, new_enc
 
-    # 2. Known check second
     if known_best and known_best[1] <= DISTANCE_THRESHOLD:
-        best_name, best_dist, best_type = known_best
-        conf_score = max(0.0, 1.0 - best_dist)
-        print(f"[recognize] RESULT: KNOWN | name={best_name} | dist={best_dist:.3f} | conf={conf_score:.2f}")
-        return best_name, best_type, conf_score, best_dist
+        nm, d, pt = known_best
+        print(f"[recognize] → KNOWN {nm} dist={d:.3f}")
+        return nm, pt, max(0.0, 1.0 - d), d, new_enc
 
-    # 3. Else Unknown
-    best_dist_final = min([d for _, (d, _) in person_best.items()] + [2.0])
-    print(f"[recognize] RESULT: Unknown | best_dist={best_dist_final:.3f} | threshold={DISTANCE_THRESHOLD}")
-    return "Unknown", "unknown", 0.0, best_dist_final
+    best_dist_final = min((d for _, (d, _) in person_best.items()), default=2.0)
+    print(f"[recognize] → Unknown | best_dist={best_dist_final:.3f}")
+    return "Unknown", "unknown", 0.0, best_dist_final, new_enc
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -503,8 +498,45 @@ def recognize(frame: np.ndarray, face_data: tuple):
 
 import time as _time
 
-_LATCH_SECS  = 5.0   # Once Known confirmed, hold identity for this many seconds
-_MIN_CONFIRM = 5     # Frames of agreement needed before saving to DB (higher = fewer false positives)
+_LATCH_SECS  = 5.0
+_MIN_CONFIRM = 3
+
+# ── Unknown-person grouping cache ──────────────────────────────────────────────
+# Stores (temp_id, embedding, monotonic_timestamp) for recently seen unknowns.
+# When a face appears that has no IoU-matching active slot, we check this cache
+# first. If a similar embedding is found (distance < threshold), we reuse that
+# temp_id — same unknown person gets a single card on the dashboard.
+_RECENT_UNKNOWNS: list = []          # [(temp_id, np.ndarray, float)]
+_UNKNOWN_GROUP_DISTANCE = 0.42       # cosine distance — same person re-entry threshold
+_UNKNOWN_GROUP_TTL      = 90.0       # seconds to remember an unknown for grouping
+
+
+def _find_matching_unknown(embedding: np.ndarray) -> str | None:
+    """Return temp_id of a recently seen similar unknown, or None."""
+    global _RECENT_UNKNOWNS
+    now = _time.monotonic()
+    _RECENT_UNKNOWNS = [
+        (tid, emb, ts) for tid, emb, ts in _RECENT_UNKNOWNS
+        if (now - ts) < _UNKNOWN_GROUP_TTL
+    ]
+    for tid, emb, _ in _RECENT_UNKNOWNS:
+        if emb.shape == embedding.shape:
+            dist = 1.0 - float(np.dot(emb, embedding))
+            if dist < _UNKNOWN_GROUP_DISTANCE:
+                return tid
+    return None
+
+
+def _register_unknown_embedding(temp_id: str, embedding: np.ndarray):
+    """Add or refresh an unknown embedding in the grouping cache."""
+    global _RECENT_UNKNOWNS
+    now = _time.monotonic()
+    # Update timestamp if already present
+    for i, (tid, emb, _) in enumerate(_RECENT_UNKNOWNS):
+        if tid == temp_id:
+            _RECENT_UNKNOWNS[i] = (tid, embedding.copy(), now)
+            return
+    _RECENT_UNKNOWNS.append((temp_id, embedding.copy(), now))
 
 
 class IdentityTracker:
@@ -531,11 +563,12 @@ class IdentityTracker:
         return inter / (union + 1e-5)
 
     def update(self, x, y, w, h, raw_name: str, p_type: str = "unknown",
-               confidence: float = 0.0, frame=None, landmarks=None, camera_source="webcam", zone_id="default"):
+               confidence: float = 0.0, frame=None, landmarks=None,
+               embedding=None, camera_source="webcam", zone_id="default"):
         now = _time.monotonic()
         box = (x, y, w, h)
 
-        # ── Find matching slot by IoU ────────────────────────────────────────────
+        # ── Find matching slot by IoU ─────────────────────────────────────────
         best_iou, best_idx = 0.0, -1
         for i, f in enumerate(self.faces):
             iou = self._iou(box, f["box"])
@@ -546,42 +579,51 @@ class IdentityTracker:
             slot = self.faces[best_idx]
             slot["box"] = box
             slot["age"] = 0
-            if landmarks: slot["landmarks"] = landmarks
+            if landmarks:
+                slot["landmarks"] = landmarks
+            if embedding is not None:
+                slot["embedding"] = embedding
         else:
-            # New slot
-            tid  = uuid.uuid4().hex[:8]
+            # No IoU match — check embedding cache for same unknown re-entering frame
+            tid = None
+            if raw_name == "Unknown" and embedding is not None:
+                tid = _find_matching_unknown(embedding)
+
+            if tid is None:
+                tid = uuid.uuid4().hex[:8]
+
             slot = {
-                "box":          box,
-                "landmarks":    landmarks,
-                "age":          0,
-                "temp_id":      tid,
-                "history":      deque(maxlen=self.history_len),
-                "latch_name":   None,
-                "latch_type":   None,
-                "latch_until":  0.0,
-                "unk_saved":    False,
-                "known_saved":  False,
+                "box":            box,
+                "landmarks":      landmarks,
+                "embedding":      embedding,
+                "age":            0,
+                "temp_id":        tid,
+                "history":        deque(maxlen=self.history_len),
+                "latch_name":     None,
+                "latch_type":     None,
+                "latch_until":    0.0,
+                "unk_snap_count": 0,
+                "unk_snap_ts":    0.0,
+                "known_saved":    False,
             }
             self.faces.append(slot)
             best_idx = len(self.faces) - 1
 
         slot = self.faces[best_idx]
 
-        # ── LATCH: if Known identity confirmed and still fresh, return it ────────
+        # ── LATCH: Known identity confirmed and still fresh → keep it ────────
         if now < slot["latch_until"] and slot["latch_name"]:
-            # Keep feeding into history to maintain vote, but don't flip identity
             slot["history"].append((slot["latch_name"], slot["latch_type"], confidence))
             return slot["latch_name"], slot["latch_type"], confidence
 
-        # ── Feed raw recognition result into history ───────────────────────────
+        # ── Feed raw result into history ──────────────────────────────────────
         slot["history"].append((raw_name, p_type, confidence))
         entries = list(slot["history"])
 
-        # Not enough history yet — show label but don’t save
         if len(entries) < _MIN_CONFIRM:
             return raw_name, p_type, confidence
 
-        # ── Majority vote ───────────────────────────────────────────────────
+        # ── Majority vote ─────────────────────────────────────────────────────
         counts: dict = {}
         for (n, t, _) in entries:
             k = (n, t)
@@ -590,48 +632,55 @@ class IdentityTracker:
         voted_conf  = next((c for (n, t, c) in reversed(entries) if n == voted_name), confidence)
         vote_ratio  = counts[(voted_name, voted_type)] / len(entries)
 
-        # Require 50%+ agreement before acting on the vote
         if vote_ratio < 0.5:
             return raw_name, p_type, confidence
 
-        # ── Act on stable vote ─────────────────────────────────────────────────
+        # ── Act on stable vote ────────────────────────────────────────────────
         if voted_type in ("known", "blacklist"):
             new_identity = (voted_name != slot["latch_name"])
-            # Set or refresh latch
             slot["latch_name"]  = voted_name
             slot["latch_type"]  = voted_type
             slot["latch_until"] = now + _LATCH_SECS
-            slot["unk_saved"]   = False  # reset unknown flag if identity confirmed
 
-            # Save to DB only when identity first confirmed (or changed)
             if new_identity and frame is not None:
                 slot["known_saved"] = True
                 if voted_type == "blacklist":
-                    # Per-person cooldown — prevents alert flood from multiple slots
                     last_bl = _blacklist_last_alert.get(voted_name, 0.0)
                     if (now - last_bl) > _BLACKLIST_ALERT_SECS:
                         _blacklist_last_alert[voted_name] = now
-                        _log_blacklist_async(voted_name, frame.copy(), box, slot.get("landmarks"), camera_source, zone_id)
-                        print(f"[tracker] ⚠ Blacklist CONFIRMED & saved: {voted_name}")
+                        _log_blacklist_async(voted_name, frame.copy(), box,
+                                             slot.get("landmarks"), camera_source, zone_id)
+                        print(f"[tracker] BLACKLIST confirmed & saved: {voted_name}")
                     else:
-                        print(f"[tracker] ⚠ Blacklist confirmed (cooldown active, {int(_BLACKLIST_ALERT_SECS - (now - last_bl))}s left): {voted_name}")
+                        remaining = int(_BLACKLIST_ALERT_SECS - (now - last_bl))
+                        print(f"[tracker] Blacklist cooldown ({remaining}s left): {voted_name}")
                 else:
-                    _log_known_async(voted_name, voted_type, voted_conf, frame.copy(), box, slot.get("landmarks"))
-                    print(f"[tracker] ✓ Known CONFIRMED & saved: {voted_name} ({voted_conf:.2f})")
+                    _log_known_async(voted_name, voted_type, voted_conf,
+                                     frame.copy(), box, slot.get("landmarks"))
+                    print(f"[tracker] Known confirmed & saved: {voted_name} ({voted_conf:.2f})")
 
             return voted_name, voted_type, voted_conf
 
         else:  # unknown stable
-            # Save unknown only ONCE per slot AND only when landmarks are valid
-            # (no landmarks = likely a false-positive background detection)
-            if not slot["unk_saved"] and frame is not None:
-                lm = slot.get("landmarks")
-                if lm is None:
-                    print(f"[tracker] Skip Unknown save: no landmarks (false positive guard) id={slot['temp_id']}")
-                    return "Unknown", "unknown", 0.0
-                slot["unk_saved"] = True
-                _log_unknown_async(slot["temp_id"], frame.copy(), box, lm)
-                print(f"[tracker] ? Unknown CONFIRMED & saved: {slot['temp_id']}")
+            _MAX_UNK_SNAPS     = 5
+            _UNK_SNAP_COOLDOWN = 20.0
+
+            if frame is not None:
+                count   = slot.get("unk_snap_count", 0)
+                last_ts = slot.get("unk_snap_ts", 0.0)
+
+                if count < _MAX_UNK_SNAPS and (count == 0 or (now - last_ts) >= _UNK_SNAP_COOLDOWN):
+                    slot["unk_snap_count"] = count + 1
+                    slot["unk_snap_ts"]    = now
+                    lm  = slot.get("landmarks")   # may be None — save relaxed handles it
+                    tid = slot["temp_id"]
+                    _log_unknown_async(tid, frame.copy(), box, lm)
+                    print(f"[tracker] Unknown snap {count+1}/{_MAX_UNK_SNAPS}: {tid}")
+
+                    # Register embedding in grouping cache on first save
+                    if count == 0 and slot.get("embedding") is not None:
+                        _register_unknown_embedding(tid, slot["embedding"])
+
             return "Unknown", "unknown", 0.0
 
     def tick(self):
