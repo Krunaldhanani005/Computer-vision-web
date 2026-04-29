@@ -1,15 +1,21 @@
 """
-face_recognition_model.py  — Production-grade FR pipeline
+face_recognition_model.py  — Production-grade FR pipeline (SCRFD + ArcFace)
 
 Pipeline:
-    frame → detect (YOLOv8n-face) → encode (dlib 128-d) → compare
+    frame → detect (SCRFD-10G) → quality gates → encode (ArcFace 512-d)
     → classify (known / unknown / blacklist)
-    → cooldown check → snapshot save → DB update (async)
+    → 3-frame majority vote → identity latch → snapshot save → DB update (async)
 
-Cooldown:
-    known / blacklist : 10 s
-    unknown           : 10 s de-duplication per tracker slot
+Post-detection quality gates:
+    1. Minimum face size  ≥ 80 × 80 px   (skip tiny / far / noisy detections)
+    2. Blur gate          ≥ 20.0 Laplacian variance  (skip motion-blurred frames)
+    3. 30% bbox padding   on unaligned fallback crops (full face stored)
+    4. 3-frame majority vote before saving  (walking / moving face stability)
+    5. DISTANCE_THRESHOLD = 0.45           (configurable cosine distance gate)
+    6. Unknown cooldown   = 6 s per slot   (prevents duplicate unknown spam)
+    7. Blur gate on save  ≥ 20.0           (only valid crops reach dashboard)
 """
+
 
 import cv2
 import numpy as np
@@ -94,19 +100,17 @@ load_encodings_from_db()
 #  FACE QUALITY VALIDATION  (practical, detection-first)
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Absolute minimums — only reject completely un-usable crops
-_MIN_SAVE_W = 40    # px — very lenient; CCTV faces can be small
-_MIN_SAVE_H = 40
+# ── Quality gate constants (post-detection, pre-save) ─────────────────────────
+# Fix #1: Minimum face size raised to 80px — skips tiny/far/noisy SCRFD hits
+_MIN_SAVE_W   = 80
+_MIN_SAVE_H   = 80
+# Fix #6 / #7: Blur gate raised to 20.0 — prevents blurry frames reaching dashboard
+_MIN_SHARPNESS = 20.0
 
 
 def _sharpness_score(gray_crop: np.ndarray) -> float:
-    """Laplacian variance — higher = sharper. Used for ranking only, not rejection."""
+    """Laplacian variance — higher = sharper."""
     return float(cv2.Laplacian(gray_crop, cv2.CV_64F).var())
-
-
-_MIN_SAVE_W = 30
-_MIN_SAVE_H = 30
-_MIN_SHARPNESS = 10.0
 
 def _validate_face_for_save(frame: np.ndarray, box) -> tuple:
     """
@@ -413,8 +417,8 @@ def recognize(frame: np.ndarray, face_data: tuple):
 
     x, y, w, h, landmarks = face_data[0], face_data[1], face_data[2], face_data[3], face_data[4]
 
-    # ── Gate 1: Minimum face size ──────────────────────────────────────────────
-    if w < 50 or h < 50:
+    # ── Gate 1: Minimum face size (Fix #2: 80px — skip tiny/far SCRFD detections) ─
+    if w < _MIN_SAVE_W or h < _MIN_SAVE_H:
         return _no_match
 
     fh, fw = frame.shape[:2]
@@ -422,10 +426,10 @@ def recognize(frame: np.ndarray, face_data: tuple):
     if face_crop_raw.size == 0:
         return _no_match
 
-    # ── Gate 2: Sharpness ─────────────────────────────────────────────────────
+    # ── Gate 2: Sharpness (Fix #6: Laplacian ≥ 20.0 — skips motion blur) ─────────
     gray_crop  = cv2.cvtColor(face_crop_raw, cv2.COLOR_BGR2GRAY)
     blur_score = float(cv2.Laplacian(gray_crop, cv2.CV_64F).var())
-    if blur_score < 8.0:
+    if blur_score < _MIN_SHARPNESS:
         return _no_match
 
     # ── ArcFace align + embed ─────────────────────────────────────────────────
@@ -662,13 +666,18 @@ class IdentityTracker:
             return voted_name, voted_type, voted_conf
 
         else:  # unknown stable
-            _MAX_UNK_SNAPS     = 5
-            _UNK_SNAP_COOLDOWN = 20.0
+            # Fix #3: Unknown cooldown = 6 s per slot — prevents duplicate spam
+            # Fix #3: Max 3 snaps per slot (first save + 2 updates at 6s intervals)
+            _MAX_UNK_SNAPS     = 3
+            _UNK_SNAP_COOLDOWN = 6.0
 
             if frame is not None:
                 count   = slot.get("unk_snap_count", 0)
                 last_ts = slot.get("unk_snap_ts", 0.0)
 
+                # First save: immediate. Subsequent saves: only after cooldown expires.
+                # upsert_unknown updates the SAME record (same temp_id) rather than
+                # inserting a new one — deduplication is enforced at the DB layer.
                 if count < _MAX_UNK_SNAPS and (count == 0 or (now - last_ts) >= _UNK_SNAP_COOLDOWN):
                     slot["unk_snap_count"] = count + 1
                     slot["unk_snap_ts"]    = now
