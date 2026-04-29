@@ -468,7 +468,7 @@ def _fr_async_task(orig_frame: np.ndarray, frame_w: int, frame_h: int,
     if zone_snapshot is None or len(zone_snapshot) < 3:
         return results
 
-    face_boxes = detect_faces_multiscale(orig_frame, min_size=20)
+    face_boxes = detect_faces_multiscale(orig_frame, min_size=45)
 
     for face_data in face_boxes:
         if len(face_data) < 5:
@@ -478,12 +478,12 @@ def _fr_async_task(orig_frame: np.ndarray, frame_w: int, frame_h: int,
         landmarks  = face_data[4]
         det_conf   = float(face_data[5]) if len(face_data) >= 6 else 0.5
 
-        # Gate 1: detection confidence — raised to 0.42 to suppress low-score CCTV FPs
-        if det_conf < 0.42:
+        # Gate 1: detection confidence — 0.25 for CCTV (wider recall, quality gates downstream filter FPs)
+        if det_conf < 0.25:
             continue
 
-        # Gate 2: minimum face size for recognition quality
-        if w < 50 or h < 50:
+        # Gate 2: minimum face size (45px — aligned with _MIN_SAVE_W/H)
+        if w < 45 or h < 45:
             continue
 
         # Gate 3: valid landmarks (strongest false-positive filter)
@@ -504,7 +504,7 @@ def _fr_async_task(orig_frame: np.ndarray, frame_w: int, frame_h: int,
             continue
         gray_crop  = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
         blur_score = float(cv2.Laplacian(gray_crop, cv2.CV_64F).var())
-        if blur_score < 12.0:
+        if blur_score < 15.0:   # Fix #4: aligned with _MIN_SHARPNESS
             continue
 
         # Gate 6: skin-tone filter — eliminates glass, furniture, signage false positives.
@@ -525,6 +525,11 @@ def _fr_async_task(orig_frame: np.ndarray, frame_w: int, frame_h: int,
         if not _zm.is_face_inside_zone((x, y, w, h),
                                        [(int(p["x"] * frame_w), int(p["y"] * frame_h))
                                         for p in zone_snapshot]):
+            continue
+
+        # Gate 7 (Fix #5): Frontal face check — both eyes present + eye dist >= 20px
+        from models.face_recognition.face_recognition_model import _is_frontal_face
+        if not _is_frontal_face(landmarks):
             continue
 
         # Recognize — returns (name, type, conf, dist, embedding)
@@ -630,7 +635,9 @@ def generate_fr_frames():
     """MJPEG generator — polygon zone-aware face recognition stream."""
     global is_fr_streaming, fr_future, fr_last_results
     _fr_skip = 0
-    _FR_PROCESS_EVERY = 1   # Optimized frame skipping for live performance (process every frame)
+    # Fix #2: Process every 2nd frame — better walking-face continuity than every 5th
+    FR_FRAME_SKIP     = 2
+    _FR_PROCESS_EVERY = FR_FRAME_SKIP
 
     while is_fr_streaming:
         frame = camera_manager.get_latest_frame()

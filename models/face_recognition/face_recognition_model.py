@@ -101,20 +101,39 @@ load_encodings_from_db()
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── Quality gate constants (post-detection, pre-save) ─────────────────────────
-# Fix #1: Minimum face size raised to 80px — skips tiny/far/noisy SCRFD hits
-_MIN_SAVE_W   = 80
-_MIN_SAVE_H   = 80
-# Fix #6 / #7: Blur gate raised to 20.0 — prevents blurry frames reaching dashboard
-_MIN_SHARPNESS = 20.0
+# Fix #3: Minimum face size — 45px balances CCTV recall vs noisy tiny detections
+_MIN_SAVE_W    = 45
+_MIN_SAVE_H    = 45
+# Fix #4: Blur gate — 15.0 Laplacian variance catches motion blur without over-rejecting
+_MIN_SHARPNESS = 15.0
+# Fix #5: Frontal validation — minimum inter-eye distance in pixels
+_MIN_EYE_DIST  = 20.0
 
 
 def _sharpness_score(gray_crop: np.ndarray) -> float:
     """Laplacian variance — higher = sharper."""
     return float(cv2.Laplacian(gray_crop, cv2.CV_64F).var())
 
+
+def _is_frontal_face(landmarks: list, min_eye_dist: float = _MIN_EYE_DIST) -> bool:
+    """
+    Fix #5: Frontal face validation using 5-point SCRFD landmarks.
+    Requires both eyes to be present and inter-eye distance >= min_eye_dist px.
+    Rejects heavy profile shots that produce poor ArcFace embeddings.
+
+    landmarks: [rx,ry, lx,ly, nx,ny, rmx,rmy, lmx,lmy]  (10 floats)
+    """
+    if landmarks is None or len(landmarks) < 4:
+        return False
+    rx, ry = float(landmarks[0]), float(landmarks[1])   # right eye
+    lx, ly = float(landmarks[2]), float(landmarks[3])   # left eye
+    eye_dist = ((lx - rx) ** 2 + (ly - ry) ** 2) ** 0.5
+    return eye_dist >= min_eye_dist
+
 def _validate_face_for_save(frame: np.ndarray, box) -> tuple:
     """
     Quality gate for face snapshots.
+    Fix #1: Sharpness is measured on the 35%-EXPANDED bbox — same region as saved crop.
     Returns: (is_valid, sharpness, reason)
     """
     x, y, w, h = box
@@ -126,24 +145,26 @@ def _validate_face_for_save(frame: np.ndarray, box) -> tuple:
     # Minimum face size gate
     if w < _MIN_SAVE_W or h < _MIN_SAVE_H:
         return False, 0.0, f"too_small ({w}x{h})"
-        
+
     # Aspect ratio validation
     aspect = w / float(h + 1e-5)
     if aspect < 0.5 or aspect > 2.0:
         return False, 0.0, f"bad_aspect_ratio ({aspect:.2f})"
 
-    x1, y1 = max(0, x), max(0, y)
-    x2, y2 = min(fw, x + w), min(fh, y + h)
+    # Fix #1: Measure sharpness on expanded crop — same as what gets saved
+    pad_x = int(w * 0.35);  pad_y = int(h * 0.35)
+    x1 = max(0, x - pad_x); y1 = max(0, y - pad_y)
+    x2 = min(fw, x + w + pad_x); y2 = min(fh, y + h + pad_y)
     raw = frame[y1:y2, x1:x2]
     if raw.size == 0:
         return False, 0.0, "empty_crop"
 
     gray = cv2.cvtColor(raw, cv2.COLOR_BGR2GRAY)
     sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-    
+
     if sharpness < _MIN_SHARPNESS:
         return False, sharpness, f"too_blurry ({sharpness:.1f})"
-        
+
     return True, sharpness, "ok"
 
 
@@ -153,33 +174,34 @@ def _validate_face_for_save(frame: np.ndarray, box) -> tuple:
 
 def _crop_face(frame: np.ndarray, box, landmarks=None):
     """
-    Crop the face region. If landmarks are provided, align the face using ArcFace.
-    Resize to 160x160 as requested.
+    Fix #1: Correct crop pipeline — NEVER saves raw detector box.
+
+    Pipeline:
+        1. Expand bbox 35% on all sides → captures forehead, chin, ears
+        2. Try ArcFace alignment (preferred) → canonical 112×112, resized to 160×160
+        3. Fallback: expanded bbox crop resized to 160×160
     """
+    x, y, w, h = box
+    fh, fw = frame.shape[:2]
+
+    # Step 1: Expand bbox 35% uniformly
+    pad_x  = int(w * 0.35)
+    pad_y  = int(h * 0.35)
+    x1_exp = max(0, x - pad_x)
+    y1_exp = max(0, y - pad_y)
+    x2_exp = min(fw, x + w + pad_x)
+    y2_exp = min(fh, y + h + pad_y)
+
+    # Step 2: ArcFace alignment (best quality — landmark-based canonical warp)
     if landmarks is not None:
         aligned = arcface.align_face(frame, landmarks)
         if aligned is not None:
-            # Aligned is 112x112, resize to 160x160
             return cv2.resize(aligned, (160, 160), interpolation=cv2.INTER_CUBIC)
-            
-    # Fallback to unaligned crop if no landmarks
-    x, y, w, h = box
-    fh, fw = frame.shape[:2]
-    
-    # Expanded padding to capture full face and prevent partial crops
-    pad_w = int(w * 0.3)
-    pad_top = int(h * 0.4)
-    pad_bot = int(h * 0.2)
 
-    x1 = max(0, x - pad_w)
-    y1 = max(0, y - pad_top)
-    x2 = min(fw, x + w + pad_w)
-    y2 = min(fh, y + h + pad_bot)
-
-    crop = frame[y1:y2, x1:x2]
+    # Step 3: Fallback — expanded bbox crop (never raw detector box)
+    crop = frame[y1_exp:y2_exp, x1_exp:x2_exp]
     if crop.size == 0:
         return None
-
     return cv2.resize(crop, (160, 160), interpolation=cv2.INTER_CUBIC)
 
 
@@ -207,12 +229,20 @@ def _write_image(crop: np.ndarray, folder: str, label: str, quality: int = 95) -
 
 
 def _save_snapshot(frame: np.ndarray, box, label: str, folder: str = None, landmarks: list = None) -> str:
-    """Quality-gated save for Known / Blacklist (strict)."""
+    """Quality-gated save for Known / Blacklist.
+    Fix #5/#6: Frontal check + expanded/aligned crop only — never raw detector box.
+    """
     try:
+        # Gate 1: size + blur on expanded region
         valid, sharpness, reason = _validate_face_for_save(frame, box)
         if not valid:
             print(f"[snapshot] Rejected ({reason}) label={label}")
             return ""
+        # Gate 2: frontal face (Fix #5) — requires eye distance >= _MIN_EYE_DIST
+        if not _is_frontal_face(landmarks):
+            print(f"[snapshot] Rejected (not frontal / no valid landmarks) label={label}")
+            return ""
+        # Crop: always expanded+aligned (Fix #1 / Fix #6)
         crop = _crop_face(frame, box, landmarks)
         if crop is None:
             print(f"[snapshot] _crop_face returned None for label={label}")
@@ -224,21 +254,31 @@ def _save_snapshot(frame: np.ndarray, box, label: str, folder: str = None, landm
 
 
 def _save_snapshot_relaxed(frame: np.ndarray, box, label: str, folder: str = None, landmarks: list = None) -> str:
-    """Relaxed save for Unknown — validates before saving snapshot."""
+    """Save for Unknown — validates quality + frontal + expanded crop.
+    Fix #5/#6: Frontal check applied; hard fallback uses expanded bbox, not raw box.
+    """
     try:
+        # Gate 1: size + blur on expanded region
         valid, sharpness, reason = _validate_face_for_save(frame, box)
         if not valid:
             print(f"[snapshot-unk] Rejected ({reason}) label={label}")
             return ""
-        
-        x, y, w, h = box
-        fh, fw = frame.shape[:2]
+        # Gate 2: frontal face (Fix #5)
+        if not _is_frontal_face(landmarks):
+            print(f"[snapshot-unk] Rejected (not frontal) label={label}")
+            return ""
+        # Crop: expanded + aligned (Fix #1 / Fix #6)
         crop = _crop_face(frame, box, landmarks)
         if crop is None:
-            # Hard fallback: raw region resized to 160x160
-            raw = frame[max(0,y):min(fh,y+h), max(0,x):min(fw,x+w)]
+            # Hard fallback: expanded bbox, NOT raw detector box
+            x, y, w, h = box
+            fh, fw = frame.shape[:2]
+            pad_x = int(w * 0.35);  pad_y = int(h * 0.35)
+            x1 = max(0, x - pad_x); y1 = max(0, y - pad_y)
+            x2 = min(fw, x + w + pad_x); y2 = min(fh, y + h + pad_y)
+            raw = frame[y1:y2, x1:x2]
             if raw.size == 0:
-                print(f"[snapshot-unk] Empty raw crop for label={label}")
+                print(f"[snapshot-unk] Empty expanded crop for label={label}")
                 return ""
             crop = cv2.resize(raw, (160, 160), interpolation=cv2.INTER_CUBIC)
         return _write_image(crop, folder or _SNAP_DIR, label, quality=90)
