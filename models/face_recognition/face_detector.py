@@ -47,9 +47,9 @@ _MODEL_CANDIDATES = [
 _MODEL_FILE = next((p for p in _MODEL_CANDIDATES if os.path.exists(p)), None)
 
 # ── Detection hyper-parameters ────────────────────────────────────────────────
-_SCORE_THRESHOLD = 0.40   # recall-precision balance: 0.40 catches side/far/CCTV faces
+_SCORE_THRESHOLD = 0.25   # Fix: lowered to 0.25 for better CCTV recall
 _NMS_IOU         = 0.35   # tight NMS — kills cross-stride duplicates reliably
-_INPUT_SIZE      = 640    # SCRFD-10G standard; good balance of speed vs far-face recall
+_INPUT_SIZE      = 960    # Fix: increased to 960px for better small face detection
 _STRIDES         = [8, 16, 32]
 _NUM_ANCHORS     = 2      # SCRFD-10G uses 2 anchors per grid cell
 

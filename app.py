@@ -3,6 +3,7 @@ import time
 import threading
 import cv2
 import numpy as np
+import scipy.optimize
 import concurrent.futures
 from flask import Flask, Response, jsonify, render_template, request, send_from_directory
 
@@ -578,58 +579,84 @@ def _draw_polygon_zone(frame: np.ndarray, points: list, frame_w: int, frame_h: i
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 0), 2)
 
 
-class FastTracker:
+def _iou(bA, bB):
+    xA = max(bA[0], bB[0])
+    yA = max(bA[1], bB[1])
+    xB = min(bA[0] + bA[2], bB[0] + bB[2])
+    yB = min(bA[1] + bA[3], bB[1] + bB[3])
+    inter = max(0, xB - xA) * max(0, yB - yA)
+    union = bA[2]*bA[3] + bB[2]*bB[3] - inter
+    return inter / (union + 1e-5)
+
+class ByteTracker:
+    """ByteTrack-style IoU tracker with velocity extrapolation between skipped frames."""
     def __init__(self):
         self.trackers = []
     
     def init_from_results(self, frame, results):
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        if not results:
+            self.trackers = []
+            return
+            
         new_trackers = []
-        for res in results:
-            x, y, w, h = res["box"]
-            x, y = max(0, int(x)), max(0, int(y))
-            w = min(int(w), gray.shape[1] - x)
-            h = min(int(h), gray.shape[0] - y)
-            if w <= 0 or h <= 0: continue
-            tmpl = gray[y:y+h, x:x+w]
-            new_trackers.append({
-                "box": (x, y, w, h),
-                "template": tmpl,
-                "name": res["name"],
-                "type": res["type"],
-                "conf": res["conf"]
-            })
+        if not self.trackers:
+            for res in results:
+                t = res.copy()
+                t['vx'] = 0.0
+                t['vy'] = 0.0
+                new_trackers.append(t)
+            self.trackers = new_trackers
+            return
+            
+        cost_matrix = np.ones((len(self.trackers), len(results)))
+        for i, t in enumerate(self.trackers):
+            for j, r in enumerate(results):
+                cost_matrix[i, j] = 1.0 - _iou(t['box'], r['box'])
+                
+        row_ind, col_ind = scipy.optimize.linear_sum_assignment(cost_matrix)
+        
+        matched_results = set()
+        for i, j in zip(row_ind, col_ind):
+            if cost_matrix[i, j] < 0.8: # IoU > 0.2
+                t = self.trackers[i]
+                r = results[j]
+                
+                old_x, old_y, w, h = t['box']
+                new_x, new_y, nw, nh = r['box']
+                
+                vx = new_x - old_x
+                vy = new_y - old_y
+                
+                new_t = r.copy()
+                new_t['vx'] = 0.5 * t['vx'] + 0.5 * vx
+                new_t['vy'] = 0.5 * t['vy'] + 0.5 * vy
+                new_trackers.append(new_t)
+                matched_results.add(j)
+                
+        for j, r in enumerate(results):
+            if j not in matched_results:
+                t = r.copy()
+                t['vx'] = 0.0
+                t['vy'] = 0.0
+                new_trackers.append(t)
+                
         self.trackers = new_trackers
 
     def update(self, frame):
         if not self.trackers: return []
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         results = []
+        fh, fw = frame.shape[:2]
         for t in self.trackers:
-            x, y, w, h = t["box"]
-            sx = max(0, x - int(w*0.5))
-            sy = max(0, y - int(h*0.5))
-            sw = min(gray.shape[1] - sx, int(w * 2.0))
-            sh = min(gray.shape[0] - sy, int(h * 2.0))
-            
-            search_roi = gray[sy:sy+sh, sx:sx+sw]
-            if search_roi.shape[0] < h or search_roi.shape[1] < w:
-                results.append({"box": t["box"], "name": t["name"], "type": t["type"], "conf": t["conf"]})
-                continue
-                
-            res = cv2.matchTemplate(search_roi, t["template"], cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, max_loc = cv2.minMaxLoc(res)
-            
-            if max_val > 0.4:
-                nx = sx + max_loc[0]
-                ny = sy + max_loc[1]
-                t["box"] = (nx, ny, w, h)
-                t["template"] = gray[ny:ny+h, nx:nx+w]
-            
-            results.append({"box": t["box"], "name": t["name"], "type": t["type"], "conf": t["conf"]})
+            x, y, w, h = t['box']
+            nx = int(x + t['vx'])
+            ny = int(y + t['vy'])
+            nx = max(0, min(fw - w, nx))
+            ny = max(0, min(fh - h, ny))
+            t['box'] = (nx, ny, w, h)
+            results.append({"box": t['box'], "name": t['name'], "type": t['type'], "conf": t['conf']})
         return results
 
-_fr_fast_tracker = FastTracker()
+_fr_fast_tracker = ByteTracker()
 
 def generate_fr_frames():
     """MJPEG generator — polygon zone-aware face recognition stream."""
