@@ -125,34 +125,31 @@
       </div>
     </a>
 
-    <!-- ── Emotion Detection ──────────────────────── -->
-    <a href="/emotion-detection" class="service-card">
-      <div class="sc-banner sc-banner--emotion">
+    <!-- ── Vehicle Detection ───────────────────────── -->
+    <a href="/vehicle-detection" class="service-card">
+      <div class="sc-banner sc-banner--object">
         <div class="sc-banner-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/>
-            <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
-            <line x1="9" y1="9" x2="9.01" y2="9" stroke-width="2.5"/>
-            <line x1="15" y1="9" x2="15.01" y2="9" stroke-width="2.5"/>
-            <!-- brain waves -->
-            <path d="M4 6c1-1 2-.5 3 0s2 1 3 0" stroke-width=".8"/>
+          <svg viewBox="0 0 24 24" fill="none" stroke="#ec4899" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="7" width="20" height="10" rx="2" ry="2"/>
+            <circle cx="6" cy="17" r="2"/>
+            <circle cx="18" cy="17" r="2"/>
           </svg>
         </div>
       </div>
       <div class="sc-body">
-        <div class="sc-tag">Analysis · CNN · FER</div>
-        <div class="sc-title">Emotion Detection</div>
+        <div class="sc-tag">Detection · YOLOv8</div>
+        <div class="sc-title">Vehicle Detection</div>
         <div class="sc-desc">
-          Keras CNN trained on the FER-2013 dataset. Classifies 7 emotions —
-          Angry, Disgust, Fear, Happy, Sad, Neutral, Surprise — with
-          per-frame confidence scores and temporal smoothing.
+          Upload a video file for YOLOv8-based vehicle and license plate
+          detection. Processes and streams annotated frames with bounding
+          boxes and OCR plate text.
         </div>
         <div class="sc-footer">
-          <div class="sc-status" style="color:var(--p-purple);">
-            <div class="sc-status-dot" style="background:var(--p-purple);"></div>
+          <div class="sc-status" style="color:#ec4899;">
+            <div class="sc-status-dot" style="background:#ec4899;"></div>
             Model Ready
           </div>
-          <div class="sc-launch" style="color:#a855f7;">
+          <div class="sc-launch" style="color:#ec4899;">
             Launch
             <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
           </div>

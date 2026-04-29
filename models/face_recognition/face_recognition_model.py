@@ -51,10 +51,15 @@ _DIR_BLACKLIST = os.path.join(_REPORT_DIR, "blacklist")
 for _d in [_SNAP_DIR, _REPORT_DIR, _DIR_KNOWN, _DIR_UNKNOWN, _DIR_BLACKLIST]:
     os.makedirs(_d, exist_ok=True)
 
-# ── Recognition parameters ────────────────────────────────────────────────────
-# Cosine distance (1 - cosine_similarity). Lowered 0.48→0.45 to reduce
-# known-as-unknown errors now that multiple embeddings are stored per person.
-DISTANCE_THRESHOLD = 0.45
+# ── Recognition thresholds (cosine distance — lower = stricter) ───────────────
+# dist ≤ BLACKLIST_THRESHOLD → blacklist match
+# dist ≤ KNOWN_THRESHOLD     → known match
+# dist > UNKNOWN_THRESHOLD   → classified as Unknown
+# (gap between KNOWN and UNKNOWN handled by 3-frame confirmation vote)
+BLACKLIST_THRESHOLD = 0.40
+KNOWN_THRESHOLD     = 0.45   # slightly more lenient for CCTV far-face embedding quality
+UNKNOWN_THRESHOLD   = 0.55
+DISTANCE_THRESHOLD  = KNOWN_THRESHOLD  # backward-compat alias
 
 # ── In-memory encoding cache ──────────────────────────────────────────────────
 known_encodings: list = []
@@ -101,13 +106,17 @@ load_encodings_from_db()
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── Quality gate constants (post-detection, pre-save) ─────────────────────────
-# Fix #3: Minimum face size — 45px balances CCTV recall vs noisy tiny detections
+# Minimum face size — 45px balances CCTV recall vs noisy tiny detections
 _MIN_SAVE_W    = 45
 _MIN_SAVE_H    = 45
-# Fix #4: Blur gate — 15.0 Laplacian variance catches motion blur without over-rejecting
+# Blur gate — reject only severely blurred frames (Laplacian variance < 15)
+# 35.0 was too strict: small/far CCTV faces naturally have low variance and were
+# getting rejected inside recognize(), appearing as Unknown even for known people.
 _MIN_SHARPNESS = 15.0
-# Fix #5: Frontal validation — minimum inter-eye distance in pixels
+# Frontal validation — minimum inter-eye distance in pixels
 _MIN_EYE_DIST  = 20.0
+# Crop padding — 35% expansion on all sides for full-face context
+_FACE_PAD      = 0.35
 
 
 def _sharpness_score(gray_crop: np.ndarray) -> float:
@@ -152,7 +161,7 @@ def _validate_face_for_save(frame: np.ndarray, box) -> tuple:
         return False, 0.0, f"bad_aspect_ratio ({aspect:.2f})"
 
     # Fix #1: Measure sharpness on expanded crop — same as what gets saved
-    pad_x = int(w * 0.35);  pad_y = int(h * 0.35)
+    pad_x = int(w * _FACE_PAD);  pad_y = int(h * _FACE_PAD)
     x1 = max(0, x - pad_x); y1 = max(0, y - pad_y)
     x2 = min(fw, x + w + pad_x); y2 = min(fh, y + h + pad_y)
     raw = frame[y1:y2, x1:x2]
@@ -185,8 +194,8 @@ def _crop_face(frame: np.ndarray, box, landmarks=None):
     fh, fw = frame.shape[:2]
 
     # Step 1: Expand bbox 35% uniformly
-    pad_x  = int(w * 0.35)
-    pad_y  = int(h * 0.35)
+    pad_x  = int(w * _FACE_PAD)
+    pad_y  = int(h * _FACE_PAD)
     x1_exp = max(0, x - pad_x)
     y1_exp = max(0, y - pad_y)
     x2_exp = min(fw, x + w + pad_x)
@@ -273,7 +282,7 @@ def _save_snapshot_relaxed(frame: np.ndarray, box, label: str, folder: str = Non
             # Hard fallback: expanded bbox, NOT raw detector box
             x, y, w, h = box
             fh, fw = frame.shape[:2]
-            pad_x = int(w * 0.35);  pad_y = int(h * 0.35)
+            pad_x = int(w * _FACE_PAD);  pad_y = int(h * _FACE_PAD)
             x1 = max(0, x - pad_x); y1 = max(0, y - pad_y)
             x2 = min(fw, x + w + pad_x); y2 = min(fh, y + h + pad_y)
             raw = frame[y1:y2, x1:x2]
@@ -521,18 +530,18 @@ def recognize(frame: np.ndarray, face_data: tuple):
     )
 
     # Priority: blacklist > known > unknown
-    if blacklist_best and blacklist_best[1] <= DISTANCE_THRESHOLD:
+    if blacklist_best and blacklist_best[1] <= BLACKLIST_THRESHOLD:
         nm, d, pt = blacklist_best
         print(f"[recognize] → BLACKLIST {nm} dist={d:.3f}")
         return nm, pt, max(0.0, 1.0 - d), d, new_enc
 
-    if known_best and known_best[1] <= DISTANCE_THRESHOLD:
+    if known_best and known_best[1] <= KNOWN_THRESHOLD:
         nm, d, pt = known_best
         print(f"[recognize] → KNOWN {nm} dist={d:.3f}")
         return nm, pt, max(0.0, 1.0 - d), d, new_enc
 
     best_dist_final = min((d for _, (d, _) in person_best.items()), default=2.0)
-    print(f"[recognize] → Unknown | best_dist={best_dist_final:.3f}")
+    print(f"[recognize] → Unknown | best_dist={best_dist_final:.3f} (thr={UNKNOWN_THRESHOLD})")
     return "Unknown", "unknown", 0.0, best_dist_final, new_enc
 
 
@@ -543,7 +552,7 @@ def recognize(frame: np.ndarray, face_data: tuple):
 import time as _time
 
 _LATCH_SECS  = 5.0
-_MIN_CONFIRM = 3
+_MIN_CONFIRM = 3   # 3-frame confirmation — all 3 must agree before committing label
 
 # ── Unknown-person grouping cache ──────────────────────────────────────────────
 # Stores (temp_id, embedding, monotonic_timestamp) for recently seen unknowns.
@@ -619,7 +628,7 @@ class IdentityTracker:
             if iou > best_iou:
                 best_iou, best_idx = iou, i
 
-        if best_idx != -1 and best_iou > 0.20:
+        if best_idx != -1 and best_iou > 0.10:   # 0.10 lets walking faces re-link across slow async frames
             slot = self.faces[best_idx]
             slot["box"] = box
             slot["age"] = 0

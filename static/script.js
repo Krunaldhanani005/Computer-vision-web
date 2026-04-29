@@ -1,6 +1,6 @@
 // ── Identity Engine — training helpers ───────────────────────────────────────
 let images = [];
-let activeFeature = null;  // 'face' | 'emotion' | 'object' | null
+let activeFeature = null;  // 'face' | 'object' | null
 
 function handleUpload(files) {
     for (let file of files) images.push(file);
@@ -190,29 +190,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
 
-    // ── Emotion Engine controls ───────────────────────────────────────────────
-    const emotionStartBtn = document.getElementById('emotion-start-btn');
-    const emotionStopBtn = document.getElementById('emotion-stop-btn');
-    const emotionFeed = document.getElementById('emotion-feed');
-    const emotionPlaceholder = document.getElementById('emotion-placeholder');
-    const emotionIndicator = document.getElementById('emotion-indicator');
-    const emotionStatus = document.getElementById('emotion-status');
-
-    function setEmotionStatus(msg, type) {
-        if (!emotionStatus) return;
-        emotionStatus.textContent = msg;
-        emotionStatus.className = 'status-box ' + type;
-    }
-
-    function resetEmotionUI() {
-        if (emotionFeed) { emotionFeed.src = ''; emotionFeed.style.display = 'none'; }
-        if (emotionPlaceholder) emotionPlaceholder.style.display = 'flex';
-        if (emotionIndicator) { emotionIndicator.classList.remove('active'); emotionIndicator.style.color = 'var(--text-dim)'; emotionIndicator.textContent = 'READY'; }
-        if (emotionStartBtn) emotionStartBtn.style.display = 'flex';
-        if (emotionStopBtn) emotionStopBtn.style.display = 'none';
-        setEmotionStatus('Ready');
-    }
-
     // ── Object Detection controls ─────────────────────────────────────────────
     const objectStartBtn = document.getElementById('object-start-btn');
     const objectStopBtn = document.getElementById('object-stop-btn');
@@ -264,9 +241,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (activeFeature === 'face') {
             await fetch('/stop_fr_camera', { method: 'POST' }).catch(() => { });
             resetFaceUI();
-        } else if (activeFeature === 'emotion') {
-            await fetch('/stop_emotion_camera', { method: 'POST' }).catch(() => { });
-            resetEmotionUI();
         } else if (activeFeature === 'object') {
             await fetch('/stop_object_camera', { method: 'POST' }).catch(() => { });
             resetObjectUI();
@@ -338,51 +312,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-
-    // ── Emotion Detection — event listeners ───────────────────────────────────
-    if (emotionStartBtn) {
-        emotionStartBtn.addEventListener('click', async () => {
-            const sourceType = document.getElementById('emotion-source-type')?.value || 'webcam';
-
-            await stopAllFeatures();
-            setEmotionStatus('Starting emotion detection...', 'info');
-            try {
-                const resp = await fetch('/start_emotion_camera', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ source: sourceType })
-                });
-                const result = await resp.json();
-                if (result.success) {
-                    activeFeature = 'emotion';
-                    if (emotionPlaceholder) emotionPlaceholder.style.display = 'none';
-                    if (emotionFeed) { emotionFeed.style.display = 'block'; emotionFeed.src = `/start_emotion?t=${Date.now()}`; }
-                    if (emotionIndicator) { emotionIndicator.classList.add('active'); emotionIndicator.style.color = 'var(--emotion)'; emotionIndicator.textContent = 'ANALYSING...'; }
-                    if (emotionStartBtn) emotionStartBtn.style.display = 'none';
-                    if (emotionStopBtn) emotionStopBtn.style.display = 'flex';
-                    setEmotionStatus('Emotion Detection Active.', 'emotion');
-                } else {
-                    setEmotionStatus(result.message || 'Could not start camera.', 'error');
-                }
-            } catch (err) {
-                setEmotionStatus('Could not start emotion camera.', 'error');
-            }
-        });
-    }
-
-    if (emotionStopBtn) {
-        emotionStopBtn.addEventListener('click', async () => {
-            try {
-                await fetch('/stop_emotion_camera', { method: 'POST' });
-                activeFeature = null;
-                resetEmotionUI();
-                setEmotionStatus('Emotion detection stopped.', 'info');
-                setTimeout(() => setEmotionStatus('Ready', ''), 3000);
-            } catch (err) {
-                setEmotionStatus('Error stopping camera.', 'error');
-            }
-        });
-    }
 
     // ── Object Detection — event listeners ────────────────────────────────────
     if (objectStartBtn) {
@@ -578,7 +507,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     if (videoFeedVehicle) {
                         videoFeedVehicle.style.display = 'block';
-                        videoFeedVehicle.src = "/video_feed/" + data.filename;
+                        videoFeedVehicle.src = "/vehicle_video_feed/" + data.filename;
                     }
 
                 } else {

@@ -47,9 +47,9 @@ _MODEL_CANDIDATES = [
 _MODEL_FILE = next((p for p in _MODEL_CANDIDATES if os.path.exists(p)), None)
 
 # ── Detection hyper-parameters ────────────────────────────────────────────────
-_SCORE_THRESHOLD = 0.25   # Fix: lowered to 0.25 for better CCTV recall
+_SCORE_THRESHOLD = 0.25   # lowered for far/small CCTV face recall; quality gates downstream filter FPs
 _NMS_IOU         = 0.35   # tight NMS — kills cross-stride duplicates reliably
-_INPUT_SIZE      = 960    # Fix: increased to 960px for better small face detection
+_INPUT_SIZE      = 960    # increased from 640 for better far/medium face recall
 _STRIDES         = [8, 16, 32]
 _NUM_ANCHORS     = 2      # SCRFD-10G uses 2 anchors per grid cell
 
@@ -93,7 +93,7 @@ def _make_anchor_map(input_size: int) -> dict:
     """Return {stride: ndarray(N,2)} of (gx, gy) anchor grid coordinates."""
     anchor_map = {}
     for stride in _STRIDES:
-        feat = input_size // stride          # 80, 40, 20
+        feat = input_size // stride          # 120, 60, 30 for 960px
         gy, gx = np.mgrid[0:feat, 0:feat]
         anchors = np.stack([gx, gy], axis=-1).reshape(-1, 2)   # (feat*feat, 2)
         anchors = np.repeat(anchors, _NUM_ANCHORS, axis=0)      # 2 anchors / cell
@@ -392,13 +392,13 @@ def clear_detector_state():
     _prev_boxes = []
 
 
-def detect_faces_multiscale(frame: np.ndarray, min_size: int = 40) -> list:
+def detect_faces_multiscale(frame: np.ndarray, min_size: int = 20) -> list:
     """
     High-recall detection for live streaming and CCTV.
 
     SCRFD-10G natively handles multiple scales via its 3-stride architecture
     (stride 8 = near/large faces, stride 32 = far/small faces), so a single
-    640-px inference already replaces the old YuNet multi-scale loop.
+    960-px inference already replaces the old YuNet multi-scale loop.
 
     An additional 1.5× upscale pass is performed for frames > 480 px to
     improve recall on very distant faces (e.g. far-end CCTV).
@@ -412,7 +412,7 @@ def detect_faces_multiscale(frame: np.ndarray, min_size: int = 40) -> list:
     fh, fw = frame.shape[:2]
     enhanced = _enhance_frame(frame)
 
-    # ── Pass 1: standard 640-px inference ────────────────────────────────────
+    # ── Pass 1: standard 960-px inference ────────────────────────────────────
     raw1 = _scrfd_infer(enhanced, score_thresh=_SCORE_THRESHOLD)
 
     # ── Pass 2: 1.5× upscale for far/small faces (CCTV wide-angle shots) ────

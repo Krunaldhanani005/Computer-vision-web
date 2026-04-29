@@ -2,16 +2,14 @@
 models/restricted_area/face_handler.py
 ────────────────────────────────────────
 Face extraction and ArcFace encoding for RA enrollment.
-Uses shared YuNet detector + ArcFace model.
+Uses face_engine (SCRFD-10G detector + ArcFace model).
 Data stored in restricted_area_db (separate from fr_surveillance_db).
 """
 
 import cv2
 import numpy as np
 
-from models.face_recognition.face_detector import get_faces_dnn
-from models.face_recognition import arcface
-from models.face_recognition.face_recognition_model import normalize_face
+from face_engine import detect_faces, align_and_embed
 
 
 def extract_encoding_from_image(img_bytes: bytes) -> np.ndarray | None:
@@ -27,7 +25,7 @@ def extract_encoding_from_image(img_bytes: bytes) -> np.ndarray | None:
             print("[ra.face_handler] Could not decode image.")
             return None
 
-        faces = get_faces_dnn(bgr, smooth=False, min_size=50)
+        faces = detect_faces(bgr, min_size=50)
         if not faces:
             print("[ra.face_handler] No face detected in image.")
             return None
@@ -39,13 +37,7 @@ def extract_encoding_from_image(img_bytes: bytes) -> np.ndarray | None:
             print("[ra.face_handler] No valid landmarks.")
             return None
 
-        aligned = arcface.align_face(bgr, landmarks)
-        if aligned is None:
-            print("[ra.face_handler] Face alignment failed.")
-            return None
-
-        norm_face = normalize_face(aligned)
-        embedding = arcface.get_embedding(norm_face)
+        embedding = align_and_embed(bgr, landmarks)
         if embedding is None:
             print("[ra.face_handler] ArcFace embedding failed.")
             return None

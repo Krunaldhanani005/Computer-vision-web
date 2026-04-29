@@ -3,7 +3,6 @@ import time
 import threading
 import cv2
 import numpy as np
-import scipy.optimize
 import concurrent.futures
 from flask import Flask, Response, jsonify, render_template, request, send_from_directory
 
@@ -12,13 +11,12 @@ from models.face_recognition import (
     train_model, recognize, clear_model,
     _identity_tracker, reset_tracking_state, load_encodings_from_db
 )
-from models.emotion_detection.emotion_model import predict_emotion, face_cascade, smooth_emotion
 from models.object_detection import detect_objects, draw_detections
 import os
 from urllib.parse import quote as _url_quote
 from dotenv import load_dotenv
 load_dotenv()
-from models.plate_detection.plate_model import generate_plate_frames, stop_video_stream
+from models.vehicle_detection.vehicle_model import generate_vehicle_frames, stop_video_stream
 
 print("Libraries loaded. Initialising Flask app...")
 app = Flask(__name__)
@@ -67,10 +65,9 @@ def _build_cctv_url():
 
 def stop_all_models():
     """Ensure only one model is active at a time."""
-    global is_fr_streaming, is_emotion_streaming, is_object_streaming, is_restricted_streaming
-    is_fr_streaming      = False
-    is_emotion_streaming = False
-    is_object_streaming  = False
+    global is_fr_streaming, is_object_streaming, is_restricted_streaming
+    is_fr_streaming         = False
+    is_object_streaming     = False
     is_restricted_streaming = False
 
 
@@ -117,11 +114,9 @@ def _close_shared_camera():
 #  GLOBAL STATE
 # ═══════════════════════════════════════════════════════════════════════════════
 is_fr_streaming         = False
-is_emotion_streaming    = False
 is_object_streaming     = False
 is_restricted_streaming = False
 fr_frame_counter        = 0
-_emotion_frame_counter  = 0
 _object_frame_counter   = 0
 restricted_frame_counter = 0
 
@@ -164,13 +159,13 @@ def live_demo():
 def face_recognition_page():
     return render_template("face_recognition.html")
 
-@app.route("/emotion-detection")
-def emotion_detection_page():
-    return render_template("emotion_detection.html")
-
 @app.route("/object-detection")
 def object_detection_page():
     return render_template("object_detection.html")
+
+@app.route("/vehicle-detection")
+def vehicle_detection_page():
+    return render_template("vehicle_detection.html")
 
 @app.route("/restricted-area")
 def restricted_area_page():
@@ -469,7 +464,7 @@ def _fr_async_task(orig_frame: np.ndarray, frame_w: int, frame_h: int,
     if zone_snapshot is None or len(zone_snapshot) < 3:
         return results
 
-    face_boxes = detect_faces_multiscale(orig_frame, min_size=45)
+    face_boxes = detect_faces_multiscale(orig_frame, min_size=20)
 
     for face_data in face_boxes:
         if len(face_data) < 5:
@@ -479,12 +474,12 @@ def _fr_async_task(orig_frame: np.ndarray, frame_w: int, frame_h: int,
         landmarks  = face_data[4]
         det_conf   = float(face_data[5]) if len(face_data) >= 6 else 0.5
 
-        # Gate 1: detection confidence — 0.25 for CCTV (wider recall, quality gates downstream filter FPs)
-        if det_conf < 0.25:
+        # Gate 1: detection confidence — 0.20 matches lowered SCRFD score threshold
+        if det_conf < 0.20:
             continue
 
-        # Gate 2: minimum face size (45px — aligned with _MIN_SAVE_W/H)
-        if w < 45 or h < 45:
+        # Gate 2: minimum face size — 20px to catch far CCTV faces
+        if w < 20 or h < 20:
             continue
 
         # Gate 3: valid landmarks (strongest false-positive filter)
@@ -496,7 +491,8 @@ def _fr_async_task(orig_frame: np.ndarray, frame_w: int, frame_h: int,
         if aspect < 0.4 or aspect > 2.0:
             continue
 
-        # Gate 5: sharpness + crop extraction (used by Gate 6 too)
+        # Gate 5: sharpness — reject only severely motion-blurred frames
+        # Threshold kept low (8.0) so far/small CCTV faces (naturally soft) are not excluded
         fh_f, fw_f = orig_frame.shape[:2]
         x1c, y1c   = max(0, x), max(0, y)
         x2c, y2c   = min(fw_f, x + w), min(fh_f, y + h)
@@ -505,12 +501,11 @@ def _fr_async_task(orig_frame: np.ndarray, frame_w: int, frame_h: int,
             continue
         gray_crop  = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
         blur_score = float(cv2.Laplacian(gray_crop, cv2.CV_64F).var())
-        if blur_score < 15.0:   # Fix #4: aligned with _MIN_SHARPNESS
+        if blur_score < 8.0:
             continue
 
         # Gate 6: skin-tone filter — eliminates glass, furniture, signage false positives.
-        # YCrCb range covers dark to fair skin under normal and IR-assisted colour cameras.
-        # Real faces need >= 15% skin-coloured pixels; glass/wood/walls score near 0%.
+        # Threshold lowered to 0.10 so far/small faces with CCTV colour cast are not rejected.
         ycrcb_crop = cv2.cvtColor(face_crop, cv2.COLOR_BGR2YCrCb)
         skin_mask  = cv2.inRange(
             ycrcb_crop,
@@ -518,7 +513,7 @@ def _fr_async_task(orig_frame: np.ndarray, frame_w: int, frame_h: int,
             np.array([255, 173, 127], dtype=np.uint8),
         )
         skin_ratio = float(np.count_nonzero(skin_mask)) / max(skin_mask.size, 1)
-        if skin_ratio < 0.15:
+        if skin_ratio < 0.10:
             continue
 
         # Gate 8: face centre inside zone (using snapshot — no live zone_manager read)
@@ -579,92 +574,14 @@ def _draw_polygon_zone(frame: np.ndarray, points: list, frame_w: int, frame_h: i
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 0), 2)
 
 
-def _iou(bA, bB):
-    xA = max(bA[0], bB[0])
-    yA = max(bA[1], bB[1])
-    xB = min(bA[0] + bA[2], bB[0] + bB[2])
-    yB = min(bA[1] + bA[3], bB[1] + bB[3])
-    inter = max(0, xB - xA) * max(0, yB - yA)
-    union = bA[2]*bA[3] + bB[2]*bB[3] - inter
-    return inter / (union + 1e-5)
-
-class ByteTracker:
-    """ByteTrack-style IoU tracker with velocity extrapolation between skipped frames."""
-    def __init__(self):
-        self.trackers = []
-    
-    def init_from_results(self, frame, results):
-        if not results:
-            self.trackers = []
-            return
-            
-        new_trackers = []
-        if not self.trackers:
-            for res in results:
-                t = res.copy()
-                t['vx'] = 0.0
-                t['vy'] = 0.0
-                new_trackers.append(t)
-            self.trackers = new_trackers
-            return
-            
-        cost_matrix = np.ones((len(self.trackers), len(results)))
-        for i, t in enumerate(self.trackers):
-            for j, r in enumerate(results):
-                cost_matrix[i, j] = 1.0 - _iou(t['box'], r['box'])
-                
-        row_ind, col_ind = scipy.optimize.linear_sum_assignment(cost_matrix)
-        
-        matched_results = set()
-        for i, j in zip(row_ind, col_ind):
-            if cost_matrix[i, j] < 0.8: # IoU > 0.2
-                t = self.trackers[i]
-                r = results[j]
-                
-                old_x, old_y, w, h = t['box']
-                new_x, new_y, nw, nh = r['box']
-                
-                vx = new_x - old_x
-                vy = new_y - old_y
-                
-                new_t = r.copy()
-                new_t['vx'] = 0.5 * t['vx'] + 0.5 * vx
-                new_t['vy'] = 0.5 * t['vy'] + 0.5 * vy
-                new_trackers.append(new_t)
-                matched_results.add(j)
-                
-        for j, r in enumerate(results):
-            if j not in matched_results:
-                t = r.copy()
-                t['vx'] = 0.0
-                t['vy'] = 0.0
-                new_trackers.append(t)
-                
-        self.trackers = new_trackers
-
-    def update(self, frame):
-        if not self.trackers: return []
-        results = []
-        fh, fw = frame.shape[:2]
-        for t in self.trackers:
-            x, y, w, h = t['box']
-            nx = int(x + t['vx'])
-            ny = int(y + t['vy'])
-            nx = max(0, min(fw - w, nx))
-            ny = max(0, min(fh - h, ny))
-            t['box'] = (nx, ny, w, h)
-            results.append({"box": t['box'], "name": t['name'], "type": t['type'], "conf": t['conf']})
-        return results
-
-_fr_fast_tracker = ByteTracker()
-
 def generate_fr_frames():
-    """MJPEG generator — polygon zone-aware face recognition stream."""
+    """MJPEG generator — polygon zone-aware face recognition stream.
+
+    Detection accuracy priority: every frame triggers a new async detection
+    task as soon as the previous one completes (FRAME_SKIP = 1).
+    Results are displayed directly — no tracker interpolation between frames.
+    """
     global is_fr_streaming, fr_future, fr_last_results
-    _fr_skip = 0
-    # Fix #2: Process every 2nd frame — better walking-face continuity than every 5th
-    FR_FRAME_SKIP     = 2
-    _FR_PROCESS_EVERY = FR_FRAME_SKIP
 
     while is_fr_streaming:
         frame = camera_manager.get_latest_frame()
@@ -677,34 +594,21 @@ def generate_fr_frames():
         zone_points = zone_manager.load_zone()
 
         if zone_points is None:
-            # NO ZONE = NO DETECTION
             fr_last_results = []
-            _fr_fast_tracker.trackers = []
-            _fr_skip = 0
         else:
-            _fr_skip = (_fr_skip + 1) % _FR_PROCESS_EVERY
-            if _fr_skip == 0 and (fr_future is None or fr_future.done()):
+            # Submit a new detection task as soon as the previous one finishes
+            if fr_future is None or fr_future.done():
                 if fr_future is not None:
                     try:
                         res = fr_future.result()
                         if res is not None:
-                            _fr_fast_tracker.init_from_results(frame, res)
+                            fr_last_results = res
                     except Exception as e:
                         print(f"[fr_async_task] Error: {e}")
 
-                # Pass zone snapshot so the task doesn't need to re-read zone_manager
                 fr_future = fr_executor.submit(
                     _fr_async_task, frame.copy(), fw, fh, list(zone_points)
                 )
-            elif fr_future is not None and fr_future.done() and not _fr_fast_tracker.trackers:
-                try:
-                    res = fr_future.result()
-                    if res is not None:
-                        _fr_fast_tracker.init_from_results(frame, res)
-                except Exception:
-                    pass
-
-            fr_last_results = _fr_fast_tracker.update(frame)
 
         # Draw polygon zone
         _draw_polygon_zone(frame, zone_points, fw, fh)
@@ -769,75 +673,7 @@ def start_fr_camera():
 def stop_fr_camera():
     global is_fr_streaming
     is_fr_streaming = False
-    if not is_emotion_streaming and not is_object_streaming and not is_restricted_streaming:
-        _close_shared_camera()
-    return jsonify({"success": True})
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  EMOTION DETECTION STREAM
-# ═══════════════════════════════════════════════════════════════════════════════
-def generate_emotion_frames():
-    global is_emotion_streaming, _emotion_frame_counter
-
-    while is_emotion_streaming:
-        frame = camera_manager.get_latest_frame()
-        if frame is None:
-            time.sleep(0.01)
-            continue
-        frame = frame.copy()
-
-        _emotion_frame_counter += 1
-        if _emotion_frame_counter % 2 != 0:
-            time.sleep(0.01)
-            continue
-
-        gray    = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        gray_eq = cv2.equalizeHist(gray)
-
-        faces = face_cascade.detectMultiScale(
-            gray_eq, scaleFactor=1.1, minNeighbors=5, minSize=(50, 50)
-        )
-
-        for (x, y, w, h) in faces:
-            if w < 50 or h < 50:
-                continue
-            crop             = _padded_crop(frame, x, y, w, h, pad=0.15)
-            emotion, conf    = predict_emotion(crop)
-            if emotion != "Unknown":
-                emotion      = smooth_emotion(emotion)
-            display = f"{emotion} ({int(conf*100)}%)" if emotion != "Unknown" else "Unknown"
-            color   = (0, 255, 0) if emotion != "Unknown" else (140, 140, 140)
-            cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-            (tw, th), _ = cv2.getTextSize(display, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
-            cv2.rectangle(frame, (x, y - th - 14), (x + tw + 6, y), (0, 0, 0), -1)
-            cv2.putText(frame, display, (x + 3, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
-
-        _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
-
-
-@app.route("/start_emotion")
-def start_emotion():
-    return Response(generate_emotion_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
-
-@app.route("/start_emotion_camera", methods=["POST"])
-def start_emotion_camera():
-    global is_emotion_streaming
-    stop_all_models()
-    err = _handle_source_switch(request.json)
-    if err:
-        return jsonify({"success": False, "message": err}), 400
-    if not _open_shared_camera():
-        return jsonify({"success": False, "message": "Cannot open camera."}), 500
-    is_emotion_streaming = True
-    return jsonify({"success": True})
-
-@app.route("/stop_emotion_camera", methods=["POST"])
-def stop_emotion_camera():
-    global is_emotion_streaming
-    is_emotion_streaming = False
-    if not is_fr_streaming and not is_object_streaming and not is_restricted_streaming:
+    if not is_object_streaming and not is_restricted_streaming:
         _close_shared_camera()
     return jsonify({"success": True})
 
@@ -886,7 +722,7 @@ def start_object_camera():
 def stop_object_camera():
     global is_object_streaming
     is_object_streaming = False
-    if not is_fr_streaming and not is_emotion_streaming and not is_restricted_streaming:
+    if not is_fr_streaming and not is_restricted_streaming:
         _close_shared_camera()
     return jsonify({"success": True})
 
@@ -1130,11 +966,11 @@ def upload_video():
     return jsonify({"filename": file.filename})
 
 
-@app.route('/video_feed/<filename>')
-def plate_video_feed(filename):
+@app.route('/vehicle_video_feed/<filename>')
+def vehicle_video_feed(filename):
     temp_path = os.path.join(TEMP_FOLDER, filename)
     return Response(
-        generate_plate_frames(temp_path),
+        generate_vehicle_frames(temp_path),
         mimetype='multipart/x-mixed-replace; boundary=frame'
     )
 

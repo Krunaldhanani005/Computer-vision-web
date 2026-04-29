@@ -3,11 +3,11 @@ models/restricted_area/__init__.py
 ────────────────────────────────────
 Independent Restricted Area surveillance module.
 
-Shared:  YuNet face detector + ArcFace model
+Shared:  SCRFD-10G face detector + ArcFace model (via face_engine)
 Separate: restricted_area_db collections (ra_events, ra_alerts, ra_snapshots)
 
 Pipeline per frame:
-    detect faces (YuNet multiscale, min_size=50)
+    detect faces (SCRFD multiscale, min_size=20)
     → quality gates (conf, size, landmarks, sharpness)
     → zone check (face center inside RA polygon — loaded from ra_zones)
     → ArcFace embed
@@ -25,9 +25,9 @@ import threading
 import cv2
 import numpy as np
 
-# ── Shared models (detection + recognition; data stored separately) ─────────
-from models.face_recognition.face_detector import detect_faces_multiscale
-from models.face_recognition import arcface
+# ── Shared face engine (detection + recognition; data stored separately) ────
+from face_engine import detect_faces, crop_face, align_and_embed, find_best_match
+from face_engine.cropper import FACE_PAD
 
 # ── RA-specific database ─────────────────────────────────────────────────────
 from .database import (
@@ -44,13 +44,14 @@ _RA_SNAP_BL      = os.path.join(_RA_SNAP_ROOT, "blacklist")
 for _d in [_RA_SNAP_ROOT, _RA_SNAP_UNKNOWN, _RA_SNAP_BL]:
     os.makedirs(_d, exist_ok=True)
 
-# ── Quality gate parameters (aligned with FR system) ─────────────────────────
-_MIN_CONF      = 0.42   # YuNet detection confidence (same as FR)
-_MIN_FACE_SIZE = 50     # px
-_MIN_SHARPNESS = 12.0   # Laplacian variance (same as FR)
+# ── Quality gate parameters (aligned with FR app-level gates) ────────────────
+_MIN_CONF        = 0.20   # SCRFD detection confidence (matches FR app gate)
+_MIN_FACE_SIZE   = 20     # px (matches FR app gate — supports far/small CCTV faces)
+_MIN_SHARPNESS   = 8.0    # Laplacian variance (matches FR app gate)
 
-# ── Recognition threshold (cosine distance, same as FR) ──────────────────────
-_DISTANCE_THRESHOLD = 0.48
+# ── Recognition thresholds (cosine distance, aligned with FR thresholds) ──────
+_AUTH_THRESHOLD  = 0.45   # ≤ this → authorized (matches FR KNOWN_THRESHOLD)
+_BL_THRESHOLD    = 0.40   # ≤ this → blacklist  (matches FR BLACKLIST_THRESHOLD)
 
 # ── Alert cooldown per slot ───────────────────────────────────────────────────
 _ALERT_COOLDOWN    = 30.0   # seconds between repeat unknown alerts
@@ -100,7 +101,7 @@ def process_frame(frame: np.ndarray,
         fh, fw = frame.shape[:2]
 
         # ── Detect all faces (multiscale: near + medium + far) ──────────────
-        face_boxes = detect_faces_multiscale(frame, min_size=_MIN_FACE_SIZE)
+        face_boxes = detect_faces(frame, min_size=_MIN_FACE_SIZE)
 
         for face_data in face_boxes:
             if len(face_data) < 5:
@@ -143,10 +144,7 @@ def process_frame(frame: np.ndarray,
                 continue
 
             # ── ArcFace encode ───────────────────────────────────────────────
-            aligned = arcface.align_face(frame, landmarks)
-            if aligned is None:
-                continue
-            embedding = arcface.get_embedding(aligned)
+            embedding = align_and_embed(frame, landmarks)
             if embedding is None:
                 continue
 
@@ -208,17 +206,14 @@ def _is_in_zone(x: int, y: int, w: int, h: int,
 def _match(embedding: np.ndarray) -> tuple:
     """
     Returns (person_type, name):
-        ("authorized", name) — RA authorized person
-        ("blacklist",  name) — FR blacklist person (critical alert)
+        ("authorized", name)  — RA authorized person
+        ("blacklist",  name)  — FR blacklist person (critical alert)
         ("unknown", "Unknown") — unrecognized intruder
     """
     # 1. Check RA authorized persons first
-    if _ra_encodings:
-        sims      = arcface.compute_similarities(_ra_encodings, embedding)
-        distances = [1.0 - s if s != -1.0 else 2.0 for s in sims]
-        best_idx  = int(np.argmin(distances))
-        if distances[best_idx] <= _DISTANCE_THRESHOLD:
-            return "authorized", _ra_names[best_idx]
+    name, _ = find_best_match(embedding, _ra_encodings, _ra_names, _AUTH_THRESHOLD)
+    if name is not None:
+        return "authorized", name
 
     # 2. Check FR blacklist encodings
     try:
@@ -227,12 +222,9 @@ def _match(embedding: np.ndarray) -> tuple:
         )
         bl_encs  = [e for e, t in zip(known_encodings, known_types) if t == "blacklist"]
         bl_names = [n for n, t in zip(known_names,    known_types) if t == "blacklist"]
-        if bl_encs:
-            sims      = arcface.compute_similarities(bl_encs, embedding)
-            distances = [1.0 - s if s != -1.0 else 2.0 for s in sims]
-            best_idx  = int(np.argmin(distances))
-            if distances[best_idx] <= _DISTANCE_THRESHOLD:
-                return "blacklist", bl_names[best_idx]
+        bl_name, _ = find_best_match(embedding, bl_encs, bl_names, _BL_THRESHOLD)
+        if bl_name is not None:
+            return "blacklist", bl_name
     except Exception as e:
         print(f"[ra._match] blacklist check error: {e}")
 
@@ -310,11 +302,7 @@ def _fire_alert_async(frame_copy: np.ndarray, x: int, y: int, w: int, h: int,
     """Save snapshot + write to RA DB in daemon thread."""
     def _worker():
         try:
-            fh, fw = frame_copy.shape[:2]
-            pad_w  = int(w * 0.15); pad_h = int(h * 0.20)
-            x1 = max(0, x - pad_w); y1 = max(0, y - pad_h)
-            x2 = min(fw, x + w + pad_w); y2 = min(fh, y + h + pad_h)
-            crop = frame_copy[y1:y2, x1:x2]
+            crop = crop_face(frame_copy, x, y, w, h)   # 35% pad via face_engine.FACE_PAD
             if crop.size == 0:
                 return
 

@@ -2,13 +2,13 @@
 models/restricted_area/recognizer.py
 ──────────────────────────────────────
 ArcFace cosine-distance matching for RA authorised persons.
-Uses shared ArcFace model; data (encodings) come from restricted_area_db only.
+Uses face_engine.find_best_match; data (encodings) come from restricted_area_db only.
 """
 
 import numpy as np
-from models.face_recognition import arcface
+from face_engine import find_best_match
 
-_RA_DISTANCE_THRESHOLD = 0.50  # cosine distance; <= this → authorised
+_RA_DISTANCE_THRESHOLD = 0.45  # cosine distance ≤ this → authorised (matches FR KNOWN_THRESHOLD)
 
 _names:     list = []
 _encodings: list = []
@@ -27,14 +27,10 @@ def match(unknown_embedding: np.ndarray) -> tuple:
         (name,      True)  — authorised person matched
         ("Unknown", False) — no match → intruder
     """
-    if not _encodings:
-        return "Unknown", False
     try:
-        similarities = arcface.compute_similarities(_encodings, unknown_embedding)
-        distances    = [1.0 - s if s != -1.0 else 2.0 for s in similarities]
-        best_idx     = int(np.argmin(distances))
-        if distances[best_idx] <= _RA_DISTANCE_THRESHOLD:
-            return _names[best_idx], True
+        name, _ = find_best_match(unknown_embedding, _encodings, _names, _RA_DISTANCE_THRESHOLD)
+        if name is not None:
+            return name, True
     except Exception as e:
         print(f"[ra.recognizer] match error: {e}")
     return "Unknown", False

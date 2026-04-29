@@ -11,7 +11,6 @@ document.addEventListener('DOMContentLoaded', () => {
     '/':                  'home',
     '/live-demo':         'demo',
     '/face-recognition':  'demo',
-    '/emotion-detection': 'demo',
     '/object-detection':  'demo',
     '/restricted-area':   'demo',
     '/report':            'report',

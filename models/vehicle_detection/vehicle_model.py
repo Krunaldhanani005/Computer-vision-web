@@ -20,7 +20,7 @@ cascade_path = os.path.join(cv2.data.haarcascades, 'haarcascade_russian_plate_nu
 if os.path.exists(cascade_path):
     plate_cascade = cv2.CascadeClassifier(cascade_path)
 
-stop_plate_video = False
+stop_vehicle_video = False
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STABILITY HELPERS
@@ -87,8 +87,8 @@ def _reset_trackers():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def stop_video_stream():
-    global stop_plate_video
-    stop_plate_video = True
+    global stop_vehicle_video
+    stop_vehicle_video = True
 
 
 def _draw_detections(frame, detections):
@@ -184,10 +184,10 @@ def _run_detection(frame, prev_tracks):
 # MAIN STREAMING GENERATOR
 # ─────────────────────────────────────────────────────────────────────────────
 
-def generate_plate_frames(video_path):
+def generate_vehicle_frames(video_path):
     """MJPEG generator. Deletes *video_path* (temp file) when streaming ends."""
-    global stop_plate_video
-    stop_plate_video = False
+    global stop_vehicle_video
+    stop_vehicle_video = False
     _reset_trackers()
 
     cap = cv2.VideoCapture(video_path)
@@ -204,7 +204,7 @@ def generate_plate_frames(video_path):
     prev_tracks     = {}  # obj_id → smoothed box (x1,y1,x2,y2)
 
     while True:
-        if stop_plate_video:
+        if stop_vehicle_video:
             break
 
         t_start = time.time()
@@ -243,6 +243,6 @@ def generate_plate_frames(video_path):
     try:
         if os.path.exists(video_path):
             os.remove(video_path)
-            print(f"[plate_model] Deleted temp file: {video_path}")
+            print(f"[vehicle_model] Deleted temp file: {video_path}")
     except Exception as e:
-        print(f"[plate_model] Could not delete temp file {video_path}: {e}")
+        print(f"[vehicle_model] Could not delete temp file {video_path}: {e}")

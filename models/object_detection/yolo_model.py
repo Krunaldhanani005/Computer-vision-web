@@ -50,7 +50,7 @@ def detect_objects(frame):
             # Class-specific control to balance detection
             if cls_name == 'bottle' and conf < 0.30: # Raised to stop blind detection
                 continue
-            elif cls_name == 'chair' and conf < 0.5: # Stop blind detection
+            elif cls_name == 'chair' and conf < 0.6: # Stop blind detection
                 continue
             elif cls_name == 'clock' and conf < 0.2:
                 continue
