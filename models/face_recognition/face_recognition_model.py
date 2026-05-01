@@ -57,8 +57,8 @@ for _d in [_SNAP_DIR, _REPORT_DIR, _DIR_KNOWN, _DIR_UNKNOWN, _DIR_BLACKLIST]:
 # dist > UNKNOWN_THRESHOLD   → classified as Unknown
 # (gap between KNOWN and UNKNOWN handled by 3-frame confirmation vote)
 BLACKLIST_THRESHOLD = 0.40
-KNOWN_THRESHOLD     = 0.45   # slightly more lenient for CCTV far-face embedding quality
-UNKNOWN_THRESHOLD   = 0.55
+KNOWN_THRESHOLD     = 0.50   # raised to 0.50 — reduces known→unknown false negatives on CCTV
+UNKNOWN_THRESHOLD   = 0.60
 DISTANCE_THRESHOLD  = KNOWN_THRESHOLD  # backward-compat alias
 
 # ── In-memory encoding cache ──────────────────────────────────────────────────
@@ -70,6 +70,11 @@ known_types:     list = []
 # creates multiple tracker slots by repeatedly entering / exiting the frame)
 _BLACKLIST_ALERT_SECS  = 60.0          # seconds between alerts for the same name
 _blacklist_last_alert: dict = {}        # name → monotonic timestamp of last fired alert
+
+# Known per-person save cooldown — prevents the same person writing to the
+# dashboard every 5 s (LATCH expiry cycle) under a continuous camera view.
+_KNOWN_SAVE_COOLDOWN  = 15.0           # seconds between dashboard saves for same name
+_known_last_save: dict = {}            # name → monotonic timestamp of last save
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -106,17 +111,22 @@ load_encodings_from_db()
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── Quality gate constants (post-detection, pre-save) ─────────────────────────
-# Minimum face size — 45px balances CCTV recall vs noisy tiny detections
-_MIN_SAVE_W    = 45
-_MIN_SAVE_H    = 45
-# Blur gate — reject only severely blurred frames (Laplacian variance < 15)
-# 35.0 was too strict: small/far CCTV faces naturally have low variance and were
-# getting rejected inside recognize(), appearing as Unknown even for known people.
+# Minimum face size for snapshot quality (dashboard crops) — lowered to 20 for far faces
+_MIN_SAVE_W    = 20
+_MIN_SAVE_H    = 20
+# Blur gate for snapshots — reject only severely blurred frames
 _MIN_SHARPNESS = 15.0
-# Frontal validation — minimum inter-eye distance in pixels
-_MIN_EYE_DIST  = 20.0
-# Crop padding — 35% expansion on all sides for full-face context
-_FACE_PAD      = 0.35
+# Frontal validation — minimum inter-eye distance in pixels (lowered for far/small CCTV faces)
+_MIN_EYE_DIST  = 8.0
+# Crop padding — 20% expansion on all sides (full face, not body)
+_FACE_PAD      = 0.20
+
+# ── Recognition gate constants (match RA _MIN_FACE_SIZE and _MIN_SHARPNESS) ───
+# These are used in recognize() only — kept separate from snapshot save gates
+# so far/small CCTV faces reach ArcFace the same way RA does.
+_MIN_RECOG_W    = 18   # matches min_size=18 in SCRFD detector
+_MIN_RECOG_H    = 18
+_MIN_RECOG_BLUR = 8.0  # same as RA _MIN_SHARPNESS
 
 
 def _sharpness_score(gray_crop: np.ndarray) -> float:
@@ -142,7 +152,9 @@ def _is_frontal_face(landmarks: list, min_eye_dist: float = _MIN_EYE_DIST) -> bo
 def _validate_face_for_save(frame: np.ndarray, box) -> tuple:
     """
     Quality gate for face snapshots.
-    Fix #1: Sharpness is measured on the 35%-EXPANDED bbox — same region as saved crop.
+    Sharpness measured on the padded bbox — same region as saved crop.
+    Min-size check is on the EXPANDED crop, not the raw detection box,
+    so far faces (small raw box, reasonable padded crop) are not wrongly rejected.
     Returns: (is_valid, sharpness, reason)
     """
     x, y, w, h = box
@@ -151,19 +163,26 @@ def _validate_face_for_save(frame: np.ndarray, box) -> tuple:
     if w <= 0 or h <= 0:
         return False, 0.0, f"zero_size ({w}x{h})"
 
-    # Minimum face size gate
-    if w < _MIN_SAVE_W or h < _MIN_SAVE_H:
-        return False, 0.0, f"too_small ({w}x{h})"
+    # Raw detection box minimum size — must be at least 18px (same as SCRFD min_size)
+    if w < 18 or h < 18:
+        return False, 0.0, f"raw_too_small ({w}x{h})"
 
     # Aspect ratio validation
     aspect = w / float(h + 1e-5)
-    if aspect < 0.5 or aspect > 2.0:
+    if aspect < 0.4 or aspect > 2.5:
         return False, 0.0, f"bad_aspect_ratio ({aspect:.2f})"
 
-    # Fix #1: Measure sharpness on expanded crop — same as what gets saved
+    # Measure sharpness on expanded crop — same as what gets saved
     pad_x = int(w * _FACE_PAD);  pad_y = int(h * _FACE_PAD)
     x1 = max(0, x - pad_x); y1 = max(0, y - pad_y)
     x2 = min(fw, x + w + pad_x); y2 = min(fh, y + h + pad_y)
+
+    # Validate expanded crop meets minimum save size
+    exp_w = x2 - x1
+    exp_h = y2 - y1
+    if exp_w < _MIN_SAVE_W or exp_h < _MIN_SAVE_H:
+        return False, 0.0, f"expanded_too_small ({exp_w}x{exp_h})"
+
     raw = frame[y1:y2, x1:x2]
     if raw.size == 0:
         return False, 0.0, "empty_crop"
@@ -262,37 +281,116 @@ def _save_snapshot(frame: np.ndarray, box, label: str, folder: str = None, landm
         return ""
 
 
+def _validate_face_for_unknown(frame: np.ndarray, box) -> tuple:
+    """
+    RELAXED quality gate for unknown face snapshots.
+    Much less strict than _validate_face_for_save() — we want to STORE unknowns
+    even at lower quality, since the goal is not to miss any unknown person.
+
+    Rejects ONLY:
+        - face crop too small (< 16px)
+        - face crop empty / zero-size
+        - extremely blurry (sharpness < 6.0)  — was 15.0, now 6.0
+        - crop too dark (mean brightness < 20)
+        - face heavily clipped (> 50% outside frame)
+
+    Does NOT reject:
+        - low detection confidence (already gated upstream)
+        - non-frontal / profile faces
+        - mild blur / motion
+
+    Returns: (is_valid, sharpness, reason)
+    """
+    x, y, w, h = box
+    fh, fw = frame.shape[:2]
+
+    if w <= 0 or h <= 0:
+        return False, 0.0, f"zero_size ({w}x{h})"
+
+    # Minimum raw box size — 16px is enough for an unknown crop
+    if w < 16 or h < 16:
+        return False, 0.0, f"raw_too_small ({w}x{h})"
+
+    # Heavy clip detection — reject if > 50% of face is outside frame
+    clip_x = max(0, -x) + max(0, (x + w) - fw)
+    clip_y = max(0, -y) + max(0, (y + h) - fh)
+    clipped = clip_x * h + clip_y * w
+    face_area = max(w * h, 1)
+    if (clipped / face_area) > 0.50:
+        return False, 0.0, f"heavily_clipped ({clipped/face_area:.0%})"
+
+    # Measure sharpness on 20%-padded crop (same region that gets saved)
+    _pad = 0.20
+    pad_x = int(w * _pad);  pad_y = int(h * _pad)
+    x1 = max(0, x - pad_x); y1 = max(0, y - pad_y)
+    x2 = min(fw, x + w + pad_x); y2 = min(fh, y + h + pad_y)
+    crop = frame[y1:y2, x1:x2]
+    if crop.size == 0:
+        return False, 0.0, "empty_crop"
+
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+    # Very lenient blur gate — only reject extremely blurry
+    if sharpness < 6.0:
+        return False, sharpness, f"extremely_blurry ({sharpness:.1f})"
+
+    # Darkness gate — reject nearly black crops
+    mean_bright = float(gray.mean())
+    if mean_bright < 20:
+        return False, sharpness, f"too_dark (mean={mean_bright:.0f})"
+
+    return True, sharpness, "ok"
+
+
 def _save_snapshot_relaxed(frame: np.ndarray, box, label: str, folder: str = None, landmarks: list = None) -> str:
-    """Save for Unknown — validates quality + frontal + expanded crop.
-    Fix #5/#6: Frontal check applied; hard fallback uses expanded bbox, not raw box.
+    """
+    Save for Unknown — RELAXED gates to maximise unknown storage.
+
+    Key differences from _save_snapshot() (known/blacklist):
+        - Uses _validate_face_for_unknown() (sharpness >= 6 instead of 15)
+        - Does NOT require frontal face / valid landmarks for save
+        - Tries alignment first, but has robust padded-bbox fallback
+        - Larger 20% padding for better face visibility in dashboard
+        - Detailed logging for every reject/save decision
     """
     try:
-        # Gate 1: size + blur on expanded region
-        valid, sharpness, reason = _validate_face_for_save(frame, box)
+        # Gate 1: relaxed quality check (size, blur, darkness, clip)
+        valid, sharpness, reason = _validate_face_for_unknown(frame, box)
         if not valid:
-            print(f"[snapshot-unk] Rejected ({reason}) label={label}")
+            print(f"[unk-save] REJECTED ({reason}) label={label} box={box[:4]}")
             return ""
-        # Gate 2: frontal face (Fix #5)
-        if not _is_frontal_face(landmarks):
-            print(f"[snapshot-unk] Rejected (not frontal) label={label}")
-            return ""
-        # Crop: expanded + aligned (Fix #1 / Fix #6)
-        crop = _crop_face(frame, box, landmarks)
+
+        # Crop: try alignment first (best quality), padded-bbox fallback
+        crop = None
+        if landmarks is not None:
+            crop = _crop_face(frame, box, landmarks)
+            if crop is not None:
+                print(f"[unk-save] Aligned crop OK label={label} sharp={sharpness:.1f}")
+
         if crop is None:
-            # Hard fallback: expanded bbox, NOT raw detector box
+            # Fallback: 20%-padded bounding box crop — always works if box is valid
             x, y, w, h = box
             fh, fw = frame.shape[:2]
-            pad_x = int(w * _FACE_PAD);  pad_y = int(h * _FACE_PAD)
+            _pad = 0.20
+            pad_x = int(w * _pad);  pad_y = int(h * _pad)
             x1 = max(0, x - pad_x); y1 = max(0, y - pad_y)
             x2 = min(fw, x + w + pad_x); y2 = min(fh, y + h + pad_y)
             raw = frame[y1:y2, x1:x2]
-            if raw.size == 0:
-                print(f"[snapshot-unk] Empty expanded crop for label={label}")
+            if raw.size == 0 or raw.shape[0] < 16 or raw.shape[1] < 16:
+                print(f"[unk-save] REJECTED (fallback crop too small {raw.shape if raw.size > 0 else 'empty'}) label={label}")
                 return ""
             crop = cv2.resize(raw, (160, 160), interpolation=cv2.INTER_CUBIC)
+            print(f"[unk-save] Padded-bbox fallback crop label={label} sharp={sharpness:.1f}")
+
+        # Final sanity
+        if crop is None or crop.size == 0 or crop.shape[0] < 20 or crop.shape[1] < 20:
+            print(f"[unk-save] REJECTED (invalid final crop) label={label}")
+            return ""
+
         return _write_image(crop, folder or _SNAP_DIR, label, quality=90)
     except Exception as e:
-        print(f"[snapshot-unk] Error: {e}")
+        print(f"[unk-save] ERROR: {e} label={label}")
         return ""
 
 
@@ -302,12 +400,12 @@ def _save_snapshot_relaxed(frame: np.ndarray, box, label: str, folder: str = Non
 
 def _log_known_async(name: str, person_type: str, confidence: float,
                      frame: np.ndarray, box, landmarks=None):
-    valid, sharpness, reason = _validate_face_for_save(frame, box)
-    if not valid:
-        print(f"[log-known] Frame rejected ({reason}) for {name}")
-        return
-
+    # Opt 7: validation runs inside the thread so the detection loop is never blocked.
     def worker():
+        valid, sharpness, reason = _validate_face_for_save(frame, box)
+        if not valid:
+            print(f"[log-known] Frame rejected ({reason}) for {name}")
+            return
         label       = f"known_{name.replace(' ', '_')}"
         snap_log    = _save_snapshot(frame, box, label, _SNAP_DIR, landmarks)
         snap_report = _save_snapshot(frame, box, label, _DIR_KNOWN, landmarks)
@@ -318,12 +416,12 @@ def _log_known_async(name: str, person_type: str, confidence: float,
 
 def _log_blacklist_async(name: str, frame: np.ndarray, box, landmarks=None,
                          camera_source="webcam", zone_id="default"):
-    valid, sharpness, reason = _validate_face_for_save(frame, box)
-    if not valid:
-        print(f"[log-blacklist] Frame rejected ({reason}) for {name}")
-        return
-
+    # Opt 7: validation runs inside the thread so the detection loop is never blocked.
     def worker():
+        valid, sharpness, reason = _validate_face_for_save(frame, box)
+        if not valid:
+            print(f"[log-blacklist] Frame rejected ({reason}) for {name}")
+            return
         label       = f"blacklist_{name.replace(' ', '_')}"
         snap_log    = _save_snapshot(frame, box, label, _SNAP_DIR, landmarks)
         snap_report = _save_snapshot(frame, box, label, _DIR_BLACKLIST, landmarks)
@@ -333,13 +431,25 @@ def _log_blacklist_async(name: str, frame: np.ndarray, box, landmarks=None,
 
 
 def _log_unknown_async(temp_id: str, frame: np.ndarray, box, landmarks=None):
-    """Unknown capture: IMMEDIATE save on first call."""
+    """Unknown capture with detailed save logging."""
     def worker():
-        label       = f"unknown_{temp_id}"
+        label = f"unknown_{temp_id}"
+        x, y, w, h = box[:4]
+        print(f"[log-unk] Attempting save for '{temp_id}' box=({x},{y},{w},{h}) landmarks={'yes' if landmarks else 'no'}")
+
         snap_log    = _save_snapshot_relaxed(frame, box, label, _SNAP_DIR, landmarks)
         snap_report = _save_snapshot_relaxed(frame, box, label, _DIR_UNKNOWN, landmarks)
-        print(f"[log-unk] '{temp_id}' saved: log={bool(snap_log)} report={bool(snap_report)} path={snap_report!r}")
-        upsert_unknown(temp_id, snap_report)
+
+        if snap_report:
+            print(f"[log-unk] ✓ SAVED '{temp_id}' → {snap_report}")
+            upsert_unknown(temp_id, snap_report)
+        elif snap_log:
+            print(f"[log-unk] ⚠ Partial save '{temp_id}' (log only, no report crop)")
+            upsert_unknown(temp_id, snap_log)
+        else:
+            print(f"[log-unk] ✗ FAILED to save any crop for '{temp_id}' — both paths rejected")
+            # Still register in DB so dashboard shows detection even without snapshot
+            upsert_unknown(temp_id, "")
     Thread(target=worker, daemon=True).start()
 
 
@@ -419,6 +529,7 @@ def clear_model():
 def reset_tracking_state():
     _identity_tracker.reset()
     _blacklist_last_alert.clear()
+    _known_last_save.clear()
     try:
         from .face_detector import clear_detector_state
         clear_detector_state()
@@ -466,8 +577,8 @@ def recognize(frame: np.ndarray, face_data: tuple):
 
     x, y, w, h, landmarks = face_data[0], face_data[1], face_data[2], face_data[3], face_data[4]
 
-    # ── Gate 1: Minimum face size (Fix #2: 80px — skip tiny/far SCRFD detections) ─
-    if w < _MIN_SAVE_W or h < _MIN_SAVE_H:
+    # ── Gate 1: Minimum face size (same as RA _MIN_FACE_SIZE = 20px) ────────────
+    if w < _MIN_RECOG_W or h < _MIN_RECOG_H:
         return _no_match
 
     fh, fw = frame.shape[:2]
@@ -475,10 +586,10 @@ def recognize(frame: np.ndarray, face_data: tuple):
     if face_crop_raw.size == 0:
         return _no_match
 
-    # ── Gate 2: Sharpness (Fix #6: Laplacian ≥ 20.0 — skips motion blur) ─────────
+    # ── Gate 2: Sharpness (same as RA _MIN_SHARPNESS = 8.0) ──────────────────
     gray_crop  = cv2.cvtColor(face_crop_raw, cv2.COLOR_BGR2GRAY)
     blur_score = float(cv2.Laplacian(gray_crop, cv2.CV_64F).var())
-    if blur_score < _MIN_SHARPNESS:
+    if blur_score < _MIN_RECOG_BLUR:
         return _no_match
 
     # ── ArcFace align + embed ─────────────────────────────────────────────────
@@ -523,11 +634,12 @@ def recognize(frame: np.ndarray, face_data: tuple):
         best_overall_name, (best_overall_dist, _) = min(
             person_best.items(), key=lambda kv: kv[1][0]
         )
-    print(
-        f"[recognize] Face {w}x{h} | blur={blur_score:.1f} | "
-        f"best={best_overall_name} | dist={best_overall_dist:.3f} | "
-        f"thr={DISTANCE_THRESHOLD} | encs={len(known_encodings)}"
-    )
+    # Debug: only log when we have a meaningful match (avoids log spam on every face)
+    if best_overall_dist < 0.7:
+        print(
+            f"[recognize] Face {w}x{h} | blur={blur_score:.1f} | "
+            f"best={best_overall_name} | dist={best_overall_dist:.3f} | encs={len(known_encodings)}"
+        )
 
     # Priority: blacklist > known > unknown
     if blacklist_best and blacklist_best[1] <= BLACKLIST_THRESHOLD:
@@ -560,8 +672,8 @@ _MIN_CONFIRM = 3   # 3-frame confirmation — all 3 must agree before committing
 # first. If a similar embedding is found (distance < threshold), we reuse that
 # temp_id — same unknown person gets a single card on the dashboard.
 _RECENT_UNKNOWNS: list = []          # [(temp_id, np.ndarray, float)]
-_UNKNOWN_GROUP_DISTANCE = 0.42       # cosine distance — same person re-entry threshold
-_UNKNOWN_GROUP_TTL      = 90.0       # seconds to remember an unknown for grouping
+_UNKNOWN_GROUP_DISTANCE = 0.30       # cosine distance < 0.30 → similarity > 0.70 → same person
+_UNKNOWN_GROUP_TTL      = 120.0      # seconds to remember an unknown for grouping (extended)
 
 
 def _find_matching_unknown(embedding: np.ndarray) -> str | None:
@@ -621,14 +733,29 @@ class IdentityTracker:
         now = _time.monotonic()
         box = (x, y, w, h)
 
-        # ── Find matching slot by IoU ─────────────────────────────────────────
+        # ── Find matching slot by IoU + centroid-distance fallback ───────────
         best_iou, best_idx = 0.0, -1
+        cx_new = x + w / 2.0
+        cy_new = y + h / 2.0
         for i, f in enumerate(self.faces):
             iou = self._iou(box, f["box"])
             if iou > best_iou:
                 best_iou, best_idx = iou, i
 
-        if best_idx != -1 and best_iou > 0.10:   # 0.10 lets walking faces re-link across slow async frames
+        # Centroid fallback: link when IoU is low but face centre is close
+        # (handles fast-moving faces between async recognition frames)
+        if best_iou < 0.15:
+            best_cent_dist = float("inf")
+            for i, f in enumerate(self.faces):
+                fx, fy, fw2, fh2 = f["box"]
+                dist_c = ((cx_new - (fx + fw2/2.0))**2 + (cy_new - (fy + fh2/2.0))**2)**0.5
+                max_dim = max(w, h, fw2, fh2, 1)
+                if dist_c < max_dim * 0.6 and dist_c < best_cent_dist:
+                    best_cent_dist = dist_c
+                    best_idx = i
+                    best_iou = 0.15   # treat as linked so branch below fires
+
+        if best_idx != -1 and best_iou >= 0.15:
             slot = self.faces[best_idx]
             slot["box"] = box
             slot["age"] = 0
@@ -685,7 +812,10 @@ class IdentityTracker:
         voted_conf  = next((c for (n, t, c) in reversed(entries) if n == voted_name), confidence)
         vote_ratio  = counts[(voted_name, voted_type)] / len(entries)
 
-        if vote_ratio < 0.5:
+        # Known/blacklist: require ALL 3 frames to agree (prevents single-frame flip)
+        # Unknown: simple majority (0.5) is sufficient
+        required_ratio = 1.0 if voted_type in ("known", "blacklist") else 0.5
+        if vote_ratio < required_ratio:
             return raw_name, p_type, confidence
 
         # ── Act on stable vote ────────────────────────────────────────────────
@@ -708,36 +838,51 @@ class IdentityTracker:
                         remaining = int(_BLACKLIST_ALERT_SECS - (now - last_bl))
                         print(f"[tracker] Blacklist cooldown ({remaining}s left): {voted_name}")
                 else:
-                    _log_known_async(voted_name, voted_type, voted_conf,
-                                     frame.copy(), box, slot.get("landmarks"))
-                    print(f"[tracker] Known confirmed & saved: {voted_name} ({voted_conf:.2f})")
+                    # Opt 8: per-name cooldown — avoids DB write every LATCH cycle
+                    last_save = _known_last_save.get(voted_name, 0.0)
+                    if (now - last_save) >= _KNOWN_SAVE_COOLDOWN:
+                        _known_last_save[voted_name] = now
+                        _log_known_async(voted_name, voted_type, voted_conf,
+                                         frame.copy(), box, slot.get("landmarks"))
+                        print(f"[tracker] Known confirmed & saved: {voted_name} ({voted_conf:.2f})")
+                    else:
+                        remaining = int(_KNOWN_SAVE_COOLDOWN - (now - last_save))
+                        print(f"[tracker] Known save cooldown ({remaining}s left): {voted_name}")
 
             return voted_name, voted_type, voted_conf
 
         else:  # unknown stable
-            # Fix #3: Unknown cooldown = 6 s per slot — prevents duplicate spam
-            # Fix #3: Max 3 snaps per slot (first save + 2 updates at 6s intervals)
-            _MAX_UNK_SNAPS     = 3
-            _UNK_SNAP_COOLDOWN = 6.0
+            _MAX_UNK_SNAPS     = 5     # allow more snaps for better dashboard representation
+            _UNK_SNAP_COOLDOWN = 25.0  # 25s between snaps (prevents spam, allows varied angles)
 
             if frame is not None:
                 count   = slot.get("unk_snap_count", 0)
                 last_ts = slot.get("unk_snap_ts", 0.0)
 
-                # First save: immediate. Subsequent saves: only after cooldown expires.
-                # upsert_unknown updates the SAME record (same temp_id) rather than
-                # inserting a new one — deduplication is enforced at the DB layer.
+                # RELAXED guard: save if we have EITHER landmarks (for aligned crop)
+                # OR a valid face box (for padded-bbox fallback crop).
+                # The old guard required BOTH lm AND emb, which blocked many valid unknowns.
+                lm  = slot.get("landmarks")
+                emb = slot.get("embedding")
+                # A face box always exists at this point, so we can always attempt the save.
+                # _save_snapshot_relaxed() handles crop quality internally.
+                can_save = True
+
                 if count < _MAX_UNK_SNAPS and (count == 0 or (now - last_ts) >= _UNK_SNAP_COOLDOWN):
                     slot["unk_snap_count"] = count + 1
                     slot["unk_snap_ts"]    = now
-                    lm  = slot.get("landmarks")   # may be None — save relaxed handles it
                     tid = slot["temp_id"]
                     _log_unknown_async(tid, frame.copy(), box, lm)
-                    print(f"[tracker] Unknown snap {count+1}/{_MAX_UNK_SNAPS}: {tid}")
+                    print(f"[tracker] Unknown snap {count+1}/{_MAX_UNK_SNAPS}: {tid} (lm={'yes' if lm else 'no'}, emb={'yes' if emb is not None else 'no'})")
 
                     # Register embedding in grouping cache on first save
-                    if count == 0 and slot.get("embedding") is not None:
-                        _register_unknown_embedding(tid, slot["embedding"])
+                    if count == 0 and emb is not None:
+                        _register_unknown_embedding(tid, emb)
+                elif count >= _MAX_UNK_SNAPS:
+                    pass  # silently skip — already logged enough snaps
+                else:
+                    remaining = int(_UNK_SNAP_COOLDOWN - (now - last_ts))
+                    print(f"[tracker] Unknown cooldown ({remaining}s left): {slot['temp_id']}")
 
             return "Unknown", "unknown", 0.0
 

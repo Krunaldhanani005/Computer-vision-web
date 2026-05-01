@@ -3,88 +3,136 @@
 
 {% block extra_css %}
 <style>
-:root{--acc:#6366f1;--g:#22c55e;--o:#f97316;--r:#ef4444;--bg2:rgba(255,255,255,.04);--br:rgba(255,255,255,.08);}
+:root{
+  --acc:#6366f1;--g:#22c55e;--o:#f97316;--r:#ef4444;--b:#3b82f6;
+  --bg2:rgba(255,255,255,.04);--br:rgba(255,255,255,.08);
+}
 .rp-wrap{padding:24px 28px;max-width:1400px;margin:0 auto;}
-/* Top bar */
-.rp-topbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:20px;}
-.rp-title{font-size:1.35rem;font-weight:800;flex:1;}
+
+/* ── Top bar ── */
+.rp-topbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px;}
+.rp-title{font-size:1.3rem;font-weight:800;flex:1;}
 .rp-tabs{display:flex;gap:0;border:1px solid var(--br);border-radius:8px;overflow:hidden;}
-.rp-tab{padding:8px 18px;font-size:.82rem;font-weight:600;cursor:pointer;color:#888;background:none;border:none;transition:.2s;}
-.rp-tab.active{background:var(--acc);color:#fff;}
+.rp-tab{padding:8px 16px;font-size:.8rem;font-weight:600;cursor:pointer;color:#888;background:none;border:none;border-right:1px solid var(--br);transition:.2s;}
+.rp-tab:last-child{border-right:none;}
+.rp-tab.active{color:#fff;}
 .rp-tab.t-g.active{background:var(--g);}
 .rp-tab.t-o.active{background:var(--o);}
 .rp-tab.t-r.active{background:var(--r);}
-/* Stats row */
-.rp-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:20px;}
+.rp-tab.t-b.active{background:var(--b);}
+
+/* ── Stats row ── */
+.rp-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px;}
 .rp-stat{background:var(--bg2);border:1px solid var(--br);border-radius:10px;padding:14px 16px;}
-.rp-stat-lbl{font-size:.72rem;color:#666;text-transform:uppercase;letter-spacing:.06em;}
-.rp-stat-val{font-size:1.7rem;font-weight:800;margin-top:4px;}
-.rp-stat-sub{font-size:.72rem;color:#555;margin-top:2px;}
-/* Controls */
-.rp-controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:18px;}
-.rp-search{flex:1;min-width:200px;padding:9px 14px;background:var(--bg2);border:1px solid var(--br);color:#fff;border-radius:8px;outline:none;font-size:.85rem;}
+.rp-stat-lbl{font-size:.7rem;color:#666;text-transform:uppercase;letter-spacing:.06em;}
+.rp-stat-val{font-size:1.6rem;font-weight:800;margin-top:4px;}
+.rp-stat-sub{font-size:.7rem;color:#555;margin-top:2px;}
+
+/* ── Date bar ── */
+.rp-datebar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px;
+  background:var(--bg2);border:1px solid var(--br);border-radius:10px;padding:10px 14px;}
+.rp-datebar-label{font-size:.75rem;color:#666;white-space:nowrap;}
+.rp-date-input{padding:7px 11px;background:#111;border:1px solid var(--br);color:#fff;border-radius:7px;
+  outline:none;font-size:.82rem;cursor:pointer;}
+.rp-date-input:focus{border-color:var(--acc);}
+.rp-date-list{display:flex;gap:5px;flex-wrap:wrap;flex:1;}
+.rp-date-chip{padding:4px 10px;border-radius:20px;font-size:.72rem;font-weight:600;cursor:pointer;
+  border:1px solid var(--br);background:var(--bg2);color:#888;transition:.15s;white-space:nowrap;}
+.rp-date-chip:hover{background:rgba(255,255,255,.08);color:#ccc;}
+.rp-date-chip.active{background:var(--acc);border-color:var(--acc);color:#fff;}
+.rp-today-btn{padding:6px 12px;border-radius:7px;font-size:.75rem;font-weight:600;cursor:pointer;
+  border:1px solid var(--acc);background:rgba(99,102,241,.15);color:var(--acc);white-space:nowrap;transition:.15s;}
+.rp-today-btn:hover{background:rgba(99,102,241,.3);}
+
+/* ── Controls ── */
+.rp-controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px;}
+.rp-search{flex:1;min-width:180px;padding:9px 13px;background:var(--bg2);border:1px solid var(--br);
+  color:#fff;border-radius:8px;outline:none;font-size:.83rem;}
 .rp-search:focus{border-color:var(--acc);}
-.rp-select{padding:9px 12px;background:var(--bg2);border:1px solid var(--br);color:#fff;border-radius:8px;outline:none;font-size:.82rem;cursor:pointer;}
-.rp-btn{padding:9px 16px;border-radius:8px;font-size:.82rem;font-weight:600;cursor:pointer;border:1px solid var(--br);background:var(--bg2);color:#ccc;transition:.18s;white-space:nowrap;}
+.rp-select{padding:9px 11px;background:var(--bg2);border:1px solid var(--br);color:#fff;
+  border-radius:8px;outline:none;font-size:.8rem;cursor:pointer;}
+.rp-btn{padding:8px 14px;border-radius:7px;font-size:.8rem;font-weight:600;cursor:pointer;
+  border:1px solid var(--br);background:var(--bg2);color:#ccc;transition:.18s;white-space:nowrap;}
 .rp-btn:hover{background:rgba(255,255,255,.1);}
 .rp-btn.primary{background:var(--acc);border-color:var(--acc);color:#fff;}
-.rp-btn.export{background:rgba(34,197,94,.1);border-color:var(--g);color:var(--g);}
-/* Count badge */
-.rp-count{background:rgba(99,102,241,.15);color:var(--acc);border:1px solid rgba(99,102,241,.3);border-radius:20px;padding:4px 12px;font-size:.78rem;font-weight:700;}
-/* Grid */
+.rp-btn.xlsx{background:rgba(34,197,94,.1);border-color:var(--g);color:var(--g);}
+.rp-btn.danger{background:rgba(239,68,68,.1);border-color:var(--r);color:var(--r);}
+.rp-count{background:rgba(99,102,241,.15);color:var(--acc);border:1px solid rgba(99,102,241,.3);
+  border-radius:20px;padding:4px 12px;font-size:.76rem;font-weight:700;}
+
+/* ── Grid ── */
 .rp-grid{display:grid;gap:14px;}
-.rp-grid.known-grid{grid-template-columns:repeat(auto-fill,minmax(180px,1fr));}
-.rp-grid.alerts-grid{grid-template-columns:repeat(auto-fill,minmax(130px,1fr));}
-/* Known card */
+.grid-known   {grid-template-columns:repeat(auto-fill,minmax(175px,1fr));}
+.grid-unknown {grid-template-columns:repeat(auto-fill,minmax(155px,1fr));}
+.grid-alerts  {grid-template-columns:repeat(auto-fill,minmax(125px,1fr));}
+
+/* ── Known / Attendance card ── */
 .kc{background:var(--bg2);border:1px solid var(--br);border-radius:12px;overflow:hidden;transition:.2s;}
 .kc:hover{transform:translateY(-3px);box-shadow:0 8px 28px rgba(0,0,0,.5);border-color:rgba(255,255,255,.15);}
 .kc-img{width:100%;aspect-ratio:1;object-fit:cover;display:block;background:#0a0a14;}
-.kc-img-ph{width:100%;aspect-ratio:1;background:#111;display:flex;align-items:center;justify-content:center;font-size:2.8rem;color:#2a2a3a;}
+.kc-img-ph{width:100%;aspect-ratio:1;background:#111;display:flex;align-items:center;justify-content:center;
+  font-size:2.6rem;color:#2a2a3a;}
 .kc-body{padding:10px 12px;}
-.kc-name{font-weight:700;font-size:.82rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:3px;}
-.kc-id{font-size:.68rem;color:#555;margin-bottom:6px;font-family:monospace;}
-.kc-att{display:flex;align-items:center;gap:6px;margin-bottom:6px;}
-.kc-att-bar{flex:1;height:4px;background:#1a1a2e;border-radius:2px;overflow:hidden;}
-.kc-att-fill{height:100%;background:var(--g);border-radius:2px;}
-.kc-att-pct{font-size:.7rem;font-weight:700;color:var(--g);}
-.kc-row{display:flex;justify-content:space-around;border-top:1px solid var(--br);padding-top:7px;margin-top:4px;}
+.kc-name{font-weight:700;font-size:.82rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:5px;}
+.kc-row{display:flex;justify-content:space-around;border-top:1px solid var(--br);padding-top:7px;margin-top:6px;}
 .kc-stat{text-align:center;}
-.kc-stat-v{font-size:.85rem;font-weight:700;}
-.kc-stat-l{font-size:.6rem;color:#555;}
-.kc-last{font-size:.65rem;color:#555;margin-top:6px;}
-/* Unknown card */
+.kc-stat-v{font-size:.82rem;font-weight:700;}
+.kc-stat-l{font-size:.58rem;color:#555;}
+.kc-meta{font-size:.64rem;color:#666;line-height:1.55;margin-top:4px;}
+
+/* ── Unknown card ── */
 .uc{background:var(--bg2);border:1px solid var(--br);border-radius:12px;overflow:hidden;transition:.2s;}
 .uc:hover{transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,.5);}
 .uc-img{width:100%;aspect-ratio:1;object-fit:cover;display:block;background:#0a0a14;}
-.uc-img-ph{width:100%;aspect-ratio:1;background:#111;display:flex;align-items:center;justify-content:center;font-size:2.5rem;color:#2a2a3a;}
+.uc-img-ph{width:100%;aspect-ratio:1;background:#111;display:flex;align-items:center;justify-content:center;
+  font-size:2.3rem;color:#2a2a3a;}
 .uc-body{padding:8px 10px;}
-.uc-id{font-size:.7rem;font-weight:700;font-family:monospace;color:var(--o);}
-.uc-meta{font-size:.65rem;color:#555;line-height:1.5;margin-top:3px;}
-.uc-badge{display:inline-block;background:rgba(249,115,22,.12);color:var(--o);border-radius:20px;font-size:.62rem;font-weight:700;padding:2px 8px;margin-top:4px;}
-/* Alert card (dense gallery) */
+.uc-id{font-size:.68rem;font-weight:700;font-family:monospace;color:var(--o);}
+.uc-meta{font-size:.63rem;color:#666;line-height:1.6;margin-top:4px;}
+
+/* ── Alert card (dense gallery) ── */
 .ac{background:#0a0a14;border-radius:8px;overflow:hidden;cursor:pointer;transition:.15s;border:1px solid transparent;}
 .ac:hover{border-color:var(--r);transform:scale(1.03);}
 .ac-img{width:100%;aspect-ratio:1;object-fit:cover;display:block;}
-.ac-img-ph{width:100%;aspect-ratio:1;background:#111;display:flex;align-items:center;justify-content:center;font-size:2rem;color:#2a2a3a;}
+.ac-img-ph{width:100%;aspect-ratio:1;background:#111;display:flex;align-items:center;justify-content:center;
+  font-size:1.8rem;color:#2a2a3a;}
 .ac-foot{padding:5px 6px;}
-.ac-type{font-size:.6rem;color:var(--r);font-weight:700;}
-.ac-time{font-size:.58rem;color:#555;}
-.ac-name{font-size:.62rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-/* Pagination */
-.rp-page{display:flex;align-items:center;gap:8px;justify-content:space-between;margin-top:22px;flex-wrap:wrap;}
-.rp-page-info{font-size:.78rem;color:#666;}
-.rp-page-btns{display:flex;gap:6px;}
-.rp-page-btn{padding:6px 14px;border-radius:6px;font-size:.78rem;font-weight:600;cursor:pointer;border:1px solid var(--br);background:var(--bg2);color:#ccc;transition:.15s;}
+.ac-type{font-size:.58rem;color:var(--r);font-weight:700;}
+.ac-time{font-size:.56rem;color:#555;}
+.ac-name{font-size:.6rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+
+/* ── Summary cards ── */
+.sum-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:18px;margin-bottom:24px;}
+.sum-card{background:var(--bg2);border:1px solid var(--br);border-radius:14px;padding:22px 24px;text-align:center;}
+.sum-card-icon{font-size:2rem;margin-bottom:8px;}
+.sum-card-val{font-size:2.6rem;font-weight:900;margin-bottom:4px;}
+.sum-card-lbl{font-size:.78rem;color:#666;text-transform:uppercase;letter-spacing:.06em;}
+.sum-hist-title{font-size:.9rem;font-weight:700;margin-bottom:12px;color:#aaa;}
+.sum-hist{display:flex;flex-direction:column;gap:6px;}
+.sum-hist-row{display:grid;grid-template-columns:100px 1fr 1fr 1fr 1fr;gap:8px;align-items:center;
+  padding:7px 10px;background:var(--bg2);border-radius:7px;font-size:.75rem;cursor:pointer;
+  border:1px solid transparent;transition:.15s;}
+.sum-hist-row:hover{border-color:var(--acc);}
+.sum-hist-row.active{border-color:var(--acc);background:rgba(99,102,241,.08);}
+.sum-hist-date{font-weight:700;font-family:monospace;color:#aaa;}
+.sum-hist-val{text-align:center;font-weight:700;}
+
+/* ── Pagination ── */
+.rp-page{display:flex;align-items:center;gap:8px;justify-content:space-between;margin-top:20px;flex-wrap:wrap;}
+.rp-page-info{font-size:.76rem;color:#666;}
+.rp-page-btns{display:flex;gap:5px;}
+.rp-page-btn{padding:5px 12px;border-radius:6px;font-size:.76rem;font-weight:600;cursor:pointer;
+  border:1px solid var(--br);background:var(--bg2);color:#ccc;transition:.15s;}
 .rp-page-btn:hover:not(:disabled){background:rgba(255,255,255,.1);}
 .rp-page-btn.active{background:var(--acc);border-color:var(--acc);color:#fff;}
 .rp-page-btn:disabled{opacity:.35;cursor:not-allowed;}
-/* Empty state */
+
+/* ── Misc ── */
 .rp-empty{grid-column:1/-1;padding:60px 20px;text-align:center;color:#444;}
 .rp-empty-icon{font-size:3rem;display:block;margin-bottom:10px;}
-/* Spinner */
 .rp-spinner{grid-column:1/-1;padding:60px;text-align:center;color:#555;}
-/* Present dot */
-.present-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--g);margin-right:4px;vertical-align:middle;}
+.present-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--g);
+  margin-right:4px;vertical-align:middle;}
 </style>
 {% endblock %}
 
@@ -94,39 +142,52 @@
   <!-- Top bar -->
   <div class="rp-topbar">
     <div>
-      <div style="font-size:.72rem;color:#555;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px;">Face Recognition</div>
+      <div style="font-size:.7rem;color:#555;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px;">Face Recognition</div>
       <div class="rp-title">&#9685; FR Report Dashboard</div>
     </div>
     <div class="rp-tabs">
-      <button class="rp-tab t-g active" id="tab-known"     onclick="switchTab('known')">&#x2714; Known</button>
-      <button class="rp-tab t-o"        id="tab-unknown"   onclick="switchTab('unknown')">&#x3F; Unknown</button>
-      <button class="rp-tab t-r"        id="tab-blacklist" onclick="switchTab('blacklist')">&#x26A0; Blacklist</button>
+      <button class="rp-tab t-g active" id="tab-attendance" onclick="switchTab('attendance')">&#x2714; Attendance</button>
+      <button class="rp-tab t-o"        id="tab-unknown"    onclick="switchTab('unknown')">&#x3F; Unknown</button>
+      <button class="rp-tab t-r"        id="tab-blacklist"  onclick="switchTab('blacklist')">&#x26A0; Blacklist</button>
+      <button class="rp-tab t-b"        id="tab-summary"    onclick="switchTab('summary')">&#x25A6; Summary</button>
     </div>
     <a href="/face-recognition" class="rp-btn" style="text-decoration:none;">&#x21B5; Live Monitor</a>
   </div>
 
-  <!-- Stats -->
+  <!-- Stats row -->
   <div class="rp-stats" id="rp-stats-row"></div>
 
+  <!-- Date bar -->
+  <div class="rp-datebar" id="rp-datebar">
+    <span class="rp-datebar-label">Date:</span>
+    <input class="rp-date-input" type="date" id="rp-date-input" onchange="onDateInput(this.value)"/>
+    <button class="rp-today-btn" onclick="goToday()">Today</button>
+    <div class="rp-date-list" id="rp-date-chips"></div>
+  </div>
+
   <!-- Controls -->
-  <div class="rp-controls">
+  <div class="rp-controls" id="rp-controls">
     <input  class="rp-search" id="rp-search" type="search" placeholder="Search..." oninput="onSearch()"/>
     <select class="rp-select" id="rp-sort" onchange="loadCurrent()">
       <option value="last_seen">Last Seen</option>
-      <option value="name_asc">Name A→Z</option>
-      <option value="name_desc">Name Z→A</option>
       <option value="detections">Most Detections</option>
     </select>
-    <input  class="rp-select" id="rp-date" type="date" style="display:none;" onchange="loadCurrent()" title="Filter by date"/>
-    <span   class="rp-count"  id="rp-count">—</span>
+    <span   class="rp-count" id="rp-count">—</span>
     <button class="rp-btn" onclick="loadCurrent()">&#x21BB; Refresh</button>
-    <button class="rp-btn export" id="rp-export-btn" onclick="exportCSV()" style="display:none;">&#x2913; Export CSV</button>
-    <button class="rp-btn" id="rp-delete-unk-btn" style="background:rgba(239,68,68,.1);border-color:var(--r);color:var(--r);display:none;" onclick="deleteAllUnknown()">&#x1F5D1; Delete All Unknown Images</button>
+    <button class="rp-btn xlsx" id="rp-xlsx-btn" onclick="exportXlsx()">&#x2913; Export XLSX</button>
+    <button class="rp-btn danger" id="rp-del-unk-btn" style="display:none;" onclick="deleteAllUnknown()">&#x1F5D1; Delete All Unknown</button>
   </div>
 
-  <!-- Grid -->
-  <div class="rp-grid known-grid" id="rp-grid">
+  <!-- Grid / Summary -->
+  <div class="rp-grid grid-known" id="rp-grid">
     <div class="rp-spinner">&#9696; Loading…</div>
+  </div>
+
+  <!-- Summary section (hidden unless summary tab) -->
+  <div id="rp-summary-section" style="display:none;">
+    <div class="sum-grid" id="sum-cards"></div>
+    <div class="sum-hist-title">&#x1F4C5; History — all recorded days</div>
+    <div class="sum-hist" id="sum-hist"></div>
   </div>
 
   <!-- Pagination -->
@@ -140,65 +201,159 @@
 
 {% block extra_scripts %}
 <script>
-// ── State ────────────────────────────────────────────────────────────────────
-let _tab       = 'known';
+// ── State ─────────────────────────────────────────────────────────────────────
+let _tab       = 'attendance';
 let _page      = 1;
 let _total     = 0;
-let _perPage   = 24;
+let _perPage   = 50;
 let _search    = '';
+let _date      = '';
+let _dates     = [];
 let _searchTimer = null;
 
-// ── Tab switch ───────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function imgSrc(p) {
+  return p ? '/' + p : null;
+}
+
+function fmt(v) { return v || '—'; }
+
+// ── Tab switch ────────────────────────────────────────────────────────────────
 function switchTab(t) {
-  _tab = t; _page = 1;
+  _tab = t; _page = 1; _search = '';
+  document.getElementById('rp-search').value = '';
+
   document.querySelectorAll('.rp-tab').forEach(b => b.classList.remove('active'));
   document.getElementById('tab-' + t).classList.add('active');
 
-  const grid = document.getElementById('rp-grid');
-  if (t === 'known') {
-    grid.className = 'rp-grid known-grid';
-    _perPage = 24;
-    document.getElementById('rp-sort').style.display = '';
-    document.getElementById('rp-date').style.display = 'none';
-    document.getElementById('rp-export-btn').style.display = '';
-    document.getElementById('rp-delete-unk-btn').style.display = 'none';
+  const grid    = document.getElementById('rp-grid');
+  const sumSec  = document.getElementById('rp-summary-section');
+  const ctrls   = document.getElementById('rp-controls');
+  const datebar = document.getElementById('rp-datebar');
+  const xlsxBtn = document.getElementById('rp-xlsx-btn');
+  const delBtn  = document.getElementById('rp-del-unk-btn');
+  const sortSel = document.getElementById('rp-sort');
+  const srchBox = document.getElementById('rp-search');
+
+  grid.style.display     = 'grid';
+  sumSec.style.display   = 'none';
+  ctrls.style.display    = 'flex';
+  datebar.style.display  = 'flex';
+  xlsxBtn.style.display  = '';
+  delBtn.style.display   = 'none';
+  document.getElementById('rp-pagination').style.display = 'none';
+
+  if (t === 'attendance') {
+    grid.className = 'rp-grid grid-known';
+    _perPage = 50;
+    sortSel.style.display = '';
+    srchBox.style.display = '';
+    xlsxBtn.style.display = '';
   } else if (t === 'unknown') {
-    grid.className = 'rp-grid known-grid';
+    grid.className = 'rp-grid grid-unknown';
     _perPage = 50;
-    document.getElementById('rp-sort').style.display = '';
-    document.getElementById('rp-date').style.display = 'none';
-    document.getElementById('rp-export-btn').style.display = 'none';
-    document.getElementById('rp-delete-unk-btn').style.display = '';
-  } else {
-    grid.className = 'rp-grid alerts-grid';
-    _perPage = 50;
-    document.getElementById('rp-sort').style.display = 'none';
-    document.getElementById('rp-date').style.display = '';
-    document.getElementById('rp-export-btn').style.display = '';
-    document.getElementById('rp-delete-unk-btn').style.display = 'none';
+    sortSel.style.display = 'none';
+    srchBox.style.display = 'none';
+    delBtn.style.display  = '';
+    xlsxBtn.style.display = '';
+  } else if (t === 'blacklist') {
+    grid.className = 'rp-grid grid-alerts';
+    _perPage = 60;
+    sortSel.style.display = 'none';
+    srchBox.style.display = '';
+    xlsxBtn.style.display = '';
+  } else if (t === 'summary') {
+    grid.style.display   = 'none';
+    sumSec.style.display = 'block';
+    ctrls.style.display  = 'none';
+    xlsxBtn.style.display = '';
+    document.getElementById('rp-pagination').style.display = 'none';
   }
-  loadCurrent();
+
+  loadDates();
   loadStats();
 }
 
+// ── Date helpers ──────────────────────────────────────────────────────────────
+function goToday() {
+  _date = today();
+  document.getElementById('rp-date-input').value = _date;
+  renderDateChips();
+  _page = 1;
+  loadCurrent();
+  if (_tab === 'summary') loadSummary(_date);
+}
+
+function onDateInput(val) {
+  _date = val;
+  renderDateChips();
+  _page = 1;
+  loadCurrent();
+  if (_tab === 'summary') loadSummary(_date);
+}
+
+async function loadDates() {
+  let url = '';
+  if (_tab === 'attendance') url = '/api/report/attendance/dates';
+  else if (_tab === 'unknown')    url = '/api/report/unknown/dates';
+  else if (_tab === 'blacklist')  url = '/api/report/blacklist/dates';
+  else if (_tab === 'summary')    url = '/api/report/summary/dates';
+
+  try {
+    const r = await fetch(url);
+    const j = await r.json();
+    _dates = j.dates || [];
+  } catch(e) { _dates = []; }
+
+  if (!_date) {
+    _date = _dates.length ? _dates[0] : today();
+    document.getElementById('rp-date-input').value = _date;
+  }
+  renderDateChips();
+  _page = 1;
+  loadCurrent();
+  if (_tab === 'summary') loadSummary(_date);
+}
+
+function renderDateChips() {
+  const show = _dates.slice(0, 14);
+  document.getElementById('rp-date-chips').innerHTML = show.map(d =>
+    `<button class="rp-date-chip${d===_date?' active':''}" onclick="selectDate('${d}')">${d}</button>`
+  ).join('');
+}
+
+function selectDate(d) {
+  _date = d;
+  document.getElementById('rp-date-input').value = d;
+  renderDateChips();
+  _page = 1;
+  loadCurrent();
+  if (_tab === 'summary') loadSummary(_date);
+}
+
+// ── Data loaders ──────────────────────────────────────────────────────────────
 function onSearch() {
   clearTimeout(_searchTimer);
   _searchTimer = setTimeout(() => { _page = 1; loadCurrent(); }, 400);
 }
 
-// ── Data loaders ─────────────────────────────────────────────────────────────
 async function loadCurrent() {
-  const search  = document.getElementById('rp-search').value.trim();
-  const sort    = document.getElementById('rp-sort').value;
-  const dateVal = document.getElementById('rp-date').value;
+  if (_tab === 'summary') { return; }
 
+  const search = document.getElementById('rp-search').value.trim();
+  const sort   = document.getElementById('rp-sort').value;
   let url = '';
-  if (_tab === 'known')
-    url = `/api/report/known?search=${encodeURIComponent(search)}&sort=${sort}&page=${_page}&per_page=${_perPage}`;
+
+  if (_tab === 'attendance')
+    url = `/api/report/attendance?date=${_date}&search=${encodeURIComponent(search)}&page=${_page}&per_page=${_perPage}`;
   else if (_tab === 'unknown')
-    url = `/api/report/unknown?search=${encodeURIComponent(search)}&sort=${sort}&page=${_page}&per_page=${_perPage}`;
+    url = `/api/report/unknown?date=${_date}&page=${_page}&per_page=${_perPage}`;
   else if (_tab === 'blacklist')
-    url = `/api/report/blacklist?search=${encodeURIComponent(search)}&date=${dateVal}&page=${_page}&per_page=${_perPage}`;
+    url = `/api/report/blacklist?search=${encodeURIComponent(search)}&date=${_date}&page=${_page}&per_page=${_perPage}`;
 
   document.getElementById('rp-grid').innerHTML = '<div class="rp-spinner">&#9696; Loading…</div>';
 
@@ -210,81 +365,149 @@ async function loadCurrent() {
     renderGrid(json.data);
     renderPagination();
   } catch(e) {
-    document.getElementById('rp-grid').innerHTML = '<div class="rp-empty"><span class="rp-empty-icon">⚠</span>Failed to load data.</div>';
+    document.getElementById('rp-grid').innerHTML =
+      '<div class="rp-empty"><span class="rp-empty-icon">⚠</span>Failed to load data.</div>';
   }
 }
 
 async function loadStats() {
-  let url = _tab === 'known' ? '/api/report/known/stats'
-           : _tab === 'unknown' ? '/api/report/unknown/stats'
-           : '/api/report/blacklist/stats';
+  const url = _tab === 'attendance' ? '/api/report/known/stats'
+            : _tab === 'unknown'    ? '/api/report/unknown/stats'
+            : _tab === 'blacklist'  ? '/api/report/blacklist/stats'
+            : null;
+  if (!url) { document.getElementById('rp-stats-row').innerHTML = ''; return; }
   try {
-    const resp = await fetch(url);
-    const s    = await resp.json();
+    const s = await (await fetch(url)).json();
     renderStats(s);
   } catch(e) {}
 }
 
-// ── Render Stats ─────────────────────────────────────────────────────────────
+// ── Summary loader ────────────────────────────────────────────────────────────
+async function loadSummary(date) {
+  document.getElementById('sum-cards').innerHTML =
+    '<div style="color:#555;font-size:.85rem;">Loading…</div>';
+  document.getElementById('sum-hist').innerHTML = '';
+
+  try {
+    const [sumResp, datesResp] = await Promise.all([
+      fetch(`/api/report/summary?date=${date}`),
+      fetch('/api/report/summary/dates'),
+    ]);
+    const s     = await sumResp.json();
+    const dList = (await datesResp.json()).dates || [];
+
+    document.getElementById('sum-cards').innerHTML = `
+      <div class="sum-card">
+        <div class="sum-card-icon">👤</div>
+        <div class="sum-card-val" style="color:var(--g)">${s.attendance_count||0}</div>
+        <div class="sum-card-lbl">Attendance</div>
+      </div>
+      <div class="sum-card">
+        <div class="sum-card-icon">✅</div>
+        <div class="sum-card-val" style="color:var(--acc)">${s.known_count||0}</div>
+        <div class="sum-card-lbl">Known Faces Seen</div>
+      </div>
+      <div class="sum-card">
+        <div class="sum-card-icon">🕵</div>
+        <div class="sum-card-val" style="color:var(--o)">${s.unknown_count||0}</div>
+        <div class="sum-card-lbl">Unknowns</div>
+      </div>
+      <div class="sum-card">
+        <div class="sum-card-icon">🚨</div>
+        <div class="sum-card-val" style="color:var(--r)">${s.blacklist_count||0}</div>
+        <div class="sum-card-lbl">Blacklist Alerts</div>
+      </div>`;
+
+    // History rows
+    const rows = await Promise.all(dList.slice(0, 30).map(async d => {
+      try {
+        const r = await fetch(`/api/report/summary?date=${d}`);
+        return await r.json();
+      } catch(e) { return {date:d,attendance_count:0,unknown_count:0,blacklist_count:0}; }
+    }));
+
+    document.getElementById('sum-hist').innerHTML = `
+      <div class="sum-hist-row" style="background:none;border:none;font-size:.68rem;color:#555;cursor:default;">
+        <span>Date</span><span style="text-align:center">Attendance</span>
+        <span style="text-align:center">Known</span>
+        <span style="text-align:center">Unknown</span>
+        <span style="text-align:center">Blacklist</span>
+      </div>` +
+      rows.map(r => `
+        <div class="sum-hist-row${r.date===date?' active':''}" onclick="selectSummaryDate('${r.date}')">
+          <span class="sum-hist-date">${r.date}</span>
+          <span class="sum-hist-val" style="color:var(--g)">${r.attendance_count||0}</span>
+          <span class="sum-hist-val" style="color:var(--acc)">${r.known_count||0}</span>
+          <span class="sum-hist-val" style="color:var(--o)">${r.unknown_count||0}</span>
+          <span class="sum-hist-val" style="color:var(--r)">${r.blacklist_count||0}</span>
+        </div>`).join('');
+  } catch(e) {
+    document.getElementById('sum-cards').innerHTML =
+      '<div style="color:#555;">Failed to load summary.</div>';
+  }
+}
+
+function selectSummaryDate(d) {
+  _date = d;
+  document.getElementById('rp-date-input').value = d;
+  renderDateChips();
+  loadSummary(d);
+}
+
+// ── Render Stats ──────────────────────────────────────────────────────────────
 function renderStats(s) {
   const row = document.getElementById('rp-stats-row');
   let html  = '';
-
-  if (_tab === 'known') {
+  if (_tab === 'attendance') {
     html = `
       <div class="rp-stat"><div class="rp-stat-lbl">Registered Faces</div><div class="rp-stat-val" style="color:var(--g)">${s.registered_faces||0}</div><div class="rp-stat-sub">Total identities</div></div>
-      <div class="rp-stat"><div class="rp-stat-lbl">Recognised Today</div><div class="rp-stat-val" style="color:var(--acc)">${s.recognized_today||0}</div><div class="rp-stat-sub">Unique persons seen</div></div>
-      <div class="rp-stat"><div class="rp-stat-lbl">Avg Attendance</div><div class="rp-stat-val" style="color:var(--o)">${s.avg_attendance||0}%</div><div class="rp-stat-sub">Across all persons</div></div>`;
+      <div class="rp-stat"><div class="rp-stat-lbl">Present Today</div><div class="rp-stat-val" style="color:var(--acc)">${s.recognized_today||0}</div><div class="rp-stat-sub">Unique persons seen</div></div>`;
   } else if (_tab === 'unknown') {
     html = `
-      <div class="rp-stat"><div class="rp-stat-lbl">Total Unknown</div><div class="rp-stat-val" style="color:var(--o)">${s.total_unknown||0}</div><div class="rp-stat-sub">Unique unknowns captured</div></div>
-      <div class="rp-stat"><div class="rp-stat-lbl">Unknown Today</div><div class="rp-stat-val" style="color:var(--r)">${s.unknown_today||0}</div><div class="rp-stat-sub">First seen today</div></div>`;
+      <div class="rp-stat"><div class="rp-stat-lbl">Total Unknowns</div><div class="rp-stat-val" style="color:var(--o)">${s.total_unknown||0}</div><div class="rp-stat-sub">All time</div></div>
+      <div class="rp-stat"><div class="rp-stat-lbl">Today</div><div class="rp-stat-val" style="color:var(--r)">${s.unknown_today||0}</div><div class="rp-stat-sub">First seen today</div></div>`;
   } else if (_tab === 'blacklist') {
     html = `
       <div class="rp-stat"><div class="rp-stat-lbl">Total Alerts</div><div class="rp-stat-val" style="color:var(--r)">${s.total_alerts||0}</div><div class="rp-stat-sub">All blacklist events</div></div>
-      <div class="rp-stat"><div class="rp-stat-lbl">Alerts Today</div><div class="rp-stat-val" style="color:var(--o)">${s.alerts_today||0}</div><div class="rp-stat-sub">Triggered since midnight</div></div>
-      <div class="rp-stat"><div class="rp-stat-lbl">Unique Persons</div><div class="rp-stat-val" style="color:var(--acc)">${s.unique_persons||0}</div><div class="rp-stat-sub">Distinct blacklist names</div></div>`;
+      <div class="rp-stat"><div class="rp-stat-lbl">Alerts Today</div><div class="rp-stat-val" style="color:var(--o)">${s.alerts_today||0}</div><div class="rp-stat-sub">Since midnight</div></div>
+      <div class="rp-stat"><div class="rp-stat-lbl">Unique Persons</div><div class="rp-stat-val" style="color:var(--acc)">${s.unique_persons||0}</div></div>`;
   }
   row.innerHTML = html;
 }
 
-// ── Render grid ───────────────────────────────────────────────────────────────
+// ── Render Grid ───────────────────────────────────────────────────────────────
 function renderGrid(data) {
   const grid = document.getElementById('rp-grid');
   if (!data || data.length === 0) {
-    grid.innerHTML = `<div class="rp-empty"><span class="rp-empty-icon">${_tab.includes('blacklist')||_tab==='restricted'?'🚨':_tab==='unknown'?'🕵':'👤'}</span>No records found.</div>`;
+    const icons = {attendance:'👤', unknown:'🕵', blacklist:'🚨'};
+    grid.innerHTML = `<div class="rp-empty"><span class="rp-empty-icon">${icons[_tab]||'📋'}</span>No records for this date.</div>`;
     return;
   }
-  if (_tab === 'known')      grid.innerHTML = data.map(knownCard).join('');
-  else if (_tab === 'unknown') grid.innerHTML = data.map(unknownCard).join('');
-  else                       grid.innerHTML = data.map(alertCard).join('');
+  if (_tab === 'attendance')    grid.innerHTML = data.map(attendanceCard).join('');
+  else if (_tab === 'unknown')  grid.innerHTML = data.map(unknownCard).join('');
+  else if (_tab === 'blacklist') grid.innerHTML = data.map(alertCard).join('');
 }
 
 // ── Card builders ─────────────────────────────────────────────────────────────
-function imgSrc(path) {
-  if (!path) return null;
-  // path is like "static/fr_reports/file.jpg" → "/static/fr_reports/file.jpg"
-  return '/' + path;
-}
-
-function knownCard(d) {
-  const snap = d.latest_snapshot ? imgSrc(d.latest_snapshot) : null;
+function attendanceCard(d) {
+  const snap = d.snapshot ? imgSrc(d.snapshot) : null;
   const img  = snap
     ? `<img class="kc-img" src="${snap}" alt="${d.name}" onerror="this.outerHTML='<div class=\\'kc-img-ph\\'>👤</div>'">`
     : `<div class="kc-img-ph">👤</div>`;
-  const pct  = d.attendance_pct || 0;
-  const dot  = d.is_present_today ? '<span class="present-dot"></span>' : '';
-  const first = d.first_seen || '—';
-  const last  = d.last_seen || '—';
+  const first = fmt(d.first_seen);
+  const last  = fmt(d.last_seen);
+  const cnt   = d.detection_count || 0;
   return `
 <div class="kc">
   ${img}
   <div class="kc-body">
-    <div class="kc-name" title="${d.name}">${d.name||'—'}</div>
-    <div class="kc-id" style="color:var(--g);font-weight:700;">Detected: ${d.total_detections||0} times</div>
-    <div class="kc-meta" style="font-size:.65rem;color:#666;line-height:1.5;margin-top:6px;">
-      <div style="margin-bottom:2px;">Attendance: <span style="color:#aaa;">${d.present_count || 0} days</span></div>
-      <div>Last Seen: ${dot}<span style="color:#aaa;">${last}</span></div>
+    <div class="kc-name" title="${d.name||''}">${d.name||'—'}</div>
+    <div class="kc-meta">
+      <div>First:&nbsp;<span style="color:#aaa">${first}</span></div>
+      <div>Last:&nbsp;&nbsp;<span style="color:#aaa">${last}</span></div>
+    </div>
+    <div class="kc-row">
+      <div class="kc-stat"><div class="kc-stat-v" style="color:var(--g)">${cnt}</div><div class="kc-stat-l">detections</div></div>
     </div>
   </div>
 </div>`;
@@ -295,15 +518,17 @@ function unknownCard(d) {
   const img  = snap
     ? `<img class="uc-img" src="${snap}" alt="unknown" onerror="this.outerHTML='<div class=\\'uc-img-ph\\'>🕵</div>'">`
     : `<div class="uc-img-ph">🕵</div>`;
+  const first = d.first_seen_fmt || (d.first_seen ? String(d.first_seen).substring(11,19) : '—');
+  const last  = d.last_seen_fmt  || (d.last_seen  ? String(d.last_seen).substring(11,19)  : '—');
   return `
 <div class="uc">
   ${img}
   <div class="uc-body">
-    <div class="uc-id" style="color:#aaa;font-weight:normal;margin-bottom:6px;">ID: ${d.temp_id || 'UNKNOWN'}</div>
-    <div class="uc-meta" style="font-size:.7rem;color:#666;line-height:1.6;">
-      Date: <span style="color:#fff;font-weight:600;">${d.date||'—'}</span><br>
-      Time: <span style="color:#fff;font-weight:600;">${d.time||'—'}</span><br>
-      Count: <span style="color:#fff;font-weight:600;">${d.detection_count||0}</span>
+    <div class="uc-id">${d.temp_id||'UNKNOWN'}</div>
+    <div class="uc-meta">
+      First: <span style="color:#fff;font-weight:600">${first}</span><br>
+      Last:&nbsp; <span style="color:#fff;font-weight:600">${last}</span><br>
+      Count: <span style="color:var(--o);font-weight:700">${d.detection_count||0}</span>
     </div>
   </div>
 </div>`;
@@ -314,34 +539,32 @@ function alertCard(d) {
   const img  = snap
     ? `<img class="ac-img" src="${snap}" alt="${d.name}" onerror="this.outerHTML='<div class=\\'ac-img-ph\\'>🚨</div>'">`
     : `<div class="ac-img-ph">🚨</div>`;
-  const t = (d.alert_time||'').substring(0,16).replace('T',' ');
+  const t = fmt(d.alert_time);
   return `
-<div class="ac" title="${d.name} — ${t}">
+<div class="ac" title="${d.name||''} — ${t}">
   ${img}
   <div class="ac-foot">
-    <div class="ac-type">⚠ Zone: ${d.zone_id || 'Default'}</div>
+    <div class="ac-type">⚠ ${d.zone_id||'Zone'}</div>
     <div class="ac-name">${d.name||'—'}</div>
-    <div class="ac-time">${t} | ${d.camera_source||'webcam'}</div>
+    <div class="ac-time">${t}</div>
   </div>
 </div>`;
 }
 
-
 // ── Pagination ────────────────────────────────────────────────────────────────
 function renderPagination() {
   const totalPages = Math.ceil(_total / _perPage);
-  const pg = document.getElementById('rp-pagination');
+  const pg   = document.getElementById('rp-pagination');
   const info = document.getElementById('rp-page-info');
   const btns = document.getElementById('rp-page-btns');
 
   if (totalPages <= 1) { pg.style.display = 'none'; return; }
   pg.style.display = 'flex';
-
   const start = (_page - 1) * _perPage + 1;
   const end   = Math.min(_page * _perPage, _total);
-  info.textContent = `Showing ${start}–${end} of ${_total} results`;
+  info.textContent = `Showing ${start}–${end} of ${_total}`;
 
-  let html = `<button class="rp-page-btn" onclick="goPage(${_page-1})" ${_page===1?'disabled':''}>‹ Prev</button>`;
+  let html = `<button class="rp-page-btn" onclick="goPage(${_page-1})" ${_page===1?'disabled':''}>‹</button>`;
   const maxBtns = 5;
   let startP = Math.max(1, _page - 2);
   let endP   = Math.min(totalPages, startP + maxBtns - 1);
@@ -349,7 +572,7 @@ function renderPagination() {
   for (let p = startP; p <= endP; p++) {
     html += `<button class="rp-page-btn ${p===_page?'active':''}" onclick="goPage(${p})">${p}</button>`;
   }
-  html += `<button class="rp-page-btn" onclick="goPage(${_page+1})" ${_page===totalPages?'disabled':''}>Next ›</button>`;
+  html += `<button class="rp-page-btn" onclick="goPage(${_page+1})" ${_page===totalPages?'disabled':''}>›</button>`;
   btns.innerHTML = html;
 }
 
@@ -361,37 +584,33 @@ function goPage(p) {
 }
 
 // ── Export ────────────────────────────────────────────────────────────────────
-function exportCSV() {
-  const url = _tab === 'known' ? '/api/report/export/known' : 
-              _tab === 'blacklist' ? '/api/report/export/blacklist' : 
-              '/api/report/export/restricted_area';
-  window.location.href = url;
+function exportXlsx() {
+  const d = _date || today();
+  window.location.href = `/api/report/export/xlsx?date=${d}`;
 }
 
 // ── Delete Unknown ────────────────────────────────────────────────────────────
 async function deleteAllUnknown() {
-  if (!confirm('Are you sure you want to delete ALL unknown face images and records? This action cannot be undone.')) {
-    return;
-  }
+  if (!confirm('Delete ALL unknown face records? This cannot be undone.')) return;
   try {
-    const res = await fetch('/api/report/unknown/delete_all', { method: 'POST' });
-    const json = await res.json();
-    if (json.success) {
-      alert('All unknown records and images deleted successfully.');
+    const r = await fetch('/api/report/unknown/delete_all', {method:'POST'});
+    const j = await r.json();
+    if (j.success) {
+      alert('All unknown records deleted.');
       _page = 1;
       loadCurrent();
       loadStats();
     } else {
       alert('Error deleting unknown records.');
     }
-  } catch(e) {
-    alert('Server error while deleting unknown records.');
-  }
+  } catch(e) { alert('Server error.'); }
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  switchTab('known');
+  _date = today();
+  document.getElementById('rp-date-input').value = _date;
+  switchTab('attendance');
 });
 </script>
 {% endblock %}

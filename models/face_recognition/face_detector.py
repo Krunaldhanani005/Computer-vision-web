@@ -1,35 +1,21 @@
 """
-face_detector.py  — SCRFD-10G face detector (replaces YuNet)
-
-Model:   det_10g.onnx  (InsightFace SCRFD-10GF with keypoints, already in weights/)
-Alias:   scrfd_10g_bnkps.onnx (checked as fallback if renamed copy provided)
+face_detector.py  — SCRFD-10G face detector
 
 Detection pipeline:
-    1. Adaptive CLAHE  — only when frame is dark (mean-L < 110) or low-contrast (std-L < 35)
+    1. Adaptive CLAHE — throttled every _ENHANCE_EVERY frames
     2. Gentle sharpening — only when Laplacian variance < 180
-    3. SCRFD inference at score_threshold=0.40
+    3. SCRFD inference at score_threshold=0.30
          3-stride anchor decode (strides 8 / 16 / 32, 2 anchors per cell)
          Landmark decode (5 points → 10 floats, ArcFace order)
     4. Partial-face filter — rejects boxes where > 30% area falls outside frame edge
-    5. Aspect-ratio filter — 0.4 – 2.2 (ignores furniture, signage, CCTV artefacts)
-    6. Landmark sanity check — requires ≥ 4/5 points inside ±60%-padded face box
-    7. Greedy IoU NMS at 0.35 — removes cross-stride duplicates
-    8. EMA box smoothing α=0.55 — tracks moving faces without jitter
+    5. Aspect-ratio filter — 0.5 – 1.8  (tighter than before to kill FP on walls/plants)
+    6. Landmark sanity check — requires >= 4/5 points inside ±25%-padded face box
+    7. Confidence gate — at least 0.35 after decoding
+    8. Strong NMS at IoU=0.45 — eliminates duplicate cross-stride boxes
+    9. Sharpness gate — face crop Laplacian var >= 10.0
 
-Return format (identical to old YuNet wrapper — NO other file changes needed):
+Return format:
     list of (x, y, w, h, landmarks_or_None, conf)
-        x, y, w, h   — int, top-left origin + dimensions
-        landmarks    — list of 10 floats [rx,ry, lx,ly, nx,ny, rmx,rmy, lmx,lmy]
-                       or None if landmark validation fails
-        conf         — float [0, 1]
-
-SCRFD landmark order is identical to ArcFace reference landmarks:
-    index 0,1  → right eye       _ARCFACE_DST[0]  [38.29, 51.70]
-    index 2,3  → left  eye       _ARCFACE_DST[1]  [73.53, 51.50]
-    index 4,5  → nose tip        _ARCFACE_DST[2]  [56.03, 71.74]
-    index 6,7  → right mouth     _ARCFACE_DST[3]  [41.55, 92.37]
-    index 8,9  → left  mouth     _ARCFACE_DST[4]  [70.73, 92.20]
-No reordering required.
 """
 
 import cv2
@@ -37,28 +23,34 @@ import numpy as np
 import os
 import onnxruntime as ort
 
-# ── Model paths (primary = InsightFace default name; alias = user-requested name) ─
+# ── Model paths ───────────────────────────────────────────────────────────────
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 _MODEL_CANDIDATES = [
     os.path.join(_BASE_DIR, "weights", "det_10g.onnx"),
     os.path.join(_BASE_DIR, "weights", "scrfd_10g_bnkps.onnx"),
 ]
-
 _MODEL_FILE = next((p for p in _MODEL_CANDIDATES if os.path.exists(p)), None)
 
 # ── Detection hyper-parameters ────────────────────────────────────────────────
-_SCORE_THRESHOLD = 0.25   # lowered for far/small CCTV face recall; quality gates downstream filter FPs
-_NMS_IOU         = 0.35   # tight NMS — kills cross-stride duplicates reliably
-_INPUT_SIZE      = 960    # increased from 640 for better far/medium face recall
-_STRIDES         = [8, 16, 32]
-_NUM_ANCHORS     = 2      # SCRFD-10G uses 2 anchors per grid cell
+_SCORE_THRESHOLD  = 0.30   # raised from 0.25 → fewer background FPs
+_POST_NMS_THRESH  = 0.35   # second confidence gate after NMS (kills weak survivors)
+_NMS_IOU          = 0.45   # stronger NMS (was 0.40) — removes more duplicate boxes
+_INPUT_SIZE       = 640    # fastest inference; upscale pass handles far faces
+_STRIDES          = [8, 16, 32]
+_NUM_ANCHORS      = 2
+_MIN_SHARPNESS    = 10.0   # Laplacian variance threshold for face crop quality
 
-# ── EMA smoothing (moving-face tracking) ──────────────────────────────────────
-_BOX_ALPHA     = 0.55   # weight on previous position (lower = more responsive)
-_EMA_IOU_MATCH = 0.15   # min IoU to link new detection → existing track
+# ── Enhancement throttle ──────────────────────────────────────────────────────
+_ENHANCE_EVERY   = 3        # run CLAHE+sharpen every N frames, reuse cache otherwise
+_enhance_counter  = 0
+_last_enhanced: np.ndarray | None = None
+
+# ── EMA smoothing ─────────────────────────────────────────────────────────────
+_BOX_ALPHA     = 0.55
+_EMA_IOU_MATCH = 0.20       # slightly higher link threshold for better stability
 _prev_boxes: list = []
 
-# ── CLAHE + sharpening (CCTV pre-processing, identical to old wrapper) ─────────
+# ── CLAHE + sharpening ────────────────────────────────────────────────────────
 _clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
 _SHARPEN_KERNEL = np.array(
     [[ 0, -0.5,  0],
@@ -68,7 +60,7 @@ _SHARPEN_KERNEL = np.array(
 
 # ── Load ONNX session ─────────────────────────────────────────────────────────
 _scrfd_session: ort.InferenceSession | None = None
-_INPUT_NAME = "input.1"   # confirmed from model inspection
+_INPUT_NAME = "input.1"
 
 if _MODEL_FILE is not None:
     try:
@@ -78,25 +70,24 @@ if _MODEL_FILE is not None:
         )
         _INPUT_NAME = _scrfd_session.get_inputs()[0].name
         print(
-            f"[face_detector] Loaded SCRFD-10G ✓  "
-            f"(score≥{_SCORE_THRESHOLD}, nms_iou={_NMS_IOU}, "
+            f"[face_detector] SCRFD-10G loaded ✓  "
+            f"(score≥{_SCORE_THRESHOLD}, nms={_NMS_IOU}, "
             f"input={_INPUT_SIZE}px)  [{os.path.basename(_MODEL_FILE)}]"
         )
     except Exception as _e:
         print(f"[face_detector] ERROR loading SCRFD model: {_e}")
 else:
-    print("[face_detector] WARNING: SCRFD model not found (det_10g.onnx / scrfd_10g_bnkps.onnx); detection disabled.")
+    print("[face_detector] WARNING: SCRFD model not found; detection disabled.")
 
 
-# ── Pre-compute anchor grids (done once at import) ────────────────────────────
+# ── Pre-compute anchor grids ──────────────────────────────────────────────────
 def _make_anchor_map(input_size: int) -> dict:
-    """Return {stride: ndarray(N,2)} of (gx, gy) anchor grid coordinates."""
     anchor_map = {}
     for stride in _STRIDES:
-        feat = input_size // stride          # 120, 60, 30 for 960px
+        feat = input_size // stride
         gy, gx = np.mgrid[0:feat, 0:feat]
-        anchors = np.stack([gx, gy], axis=-1).reshape(-1, 2)   # (feat*feat, 2)
-        anchors = np.repeat(anchors, _NUM_ANCHORS, axis=0)      # 2 anchors / cell
+        anchors = np.stack([gx, gy], axis=-1).reshape(-1, 2)
+        anchors = np.repeat(anchors, _NUM_ANCHORS, axis=0)
         anchor_map[stride] = anchors.astype(np.float32)
     return anchor_map
 
@@ -109,10 +100,15 @@ _ANCHOR_MAP = _make_anchor_map(_INPUT_SIZE)
 
 def _enhance_frame(frame: np.ndarray) -> np.ndarray:
     """
-    Adaptive CCTV enhancement — only touches frames that actually need it.
-    CLAHE when: mean-L < 110 (dark) OR std-L < 35 (low contrast)
-    Sharpening when: Laplacian variance < 180 (blurry)
+    Throttled adaptive CCTV enhancement.
+    Runs CLAHE+sharpening every _ENHANCE_EVERY frames; reuses cache between.
     """
+    global _enhance_counter, _last_enhanced
+
+    _enhance_counter += 1
+    if _last_enhanced is not None and (_enhance_counter % _ENHANCE_EVERY != 0):
+        return _last_enhanced
+
     lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
     mean_l = float(l.mean())
@@ -128,14 +124,12 @@ def _enhance_frame(frame: np.ndarray) -> np.ndarray:
     if cv2.Laplacian(gray, cv2.CV_64F).var() < 180:
         enhanced = cv2.filter2D(enhanced, -1, _SHARPEN_KERNEL)
 
+    _last_enhanced = enhanced
     return enhanced
 
 
 def _preprocess(frame: np.ndarray):
-    """
-    Letterbox-resize to _INPUT_SIZE × _INPUT_SIZE, normalize for SCRFD.
-    Returns: (blob NCHW float32, scale float)
-    """
+    """Letterbox-resize to _INPUT_SIZE, normalize for SCRFD."""
     h, w  = frame.shape[:2]
     scale = min(_INPUT_SIZE / w, _INPUT_SIZE / h)
     nw    = int(w * scale)
@@ -147,7 +141,7 @@ def _preprocess(frame: np.ndarray):
 
     blob = pad.astype(np.float32)
     blob = (blob - 127.5) / 128.0
-    blob = blob.transpose(2, 0, 1)[np.newaxis]   # → NCHW
+    blob = blob.transpose(2, 0, 1)[np.newaxis]
     return blob, scale
 
 
@@ -181,12 +175,12 @@ def _nms(boxes_xywh: list, scores: list, iou_thresh: float) -> list:
 
 def _validate_landmarks(x: int, y: int, w: int, h: int, lm: list) -> bool:
     """
-    Require ≥ 4/5 landmark points inside a ±60%-padded face box.
-    Rejects non-face objects whose keypoints scatter outside the box.
+    Require >= 4/5 landmark points inside a ±25%-padded face box.
+    Tighter than the old 60% — kills FP landmarks on walls/plants.
     """
     if lm is None or len(lm) < 10:
         return False
-    px, py     = w * 0.60, h * 0.60
+    px, py     = w * 0.25, h * 0.25
     x_lo, x_hi = x - px, x + w + px
     y_lo, y_hi = y - py, y + h + py
     valid = sum(
@@ -199,16 +193,23 @@ def _validate_landmarks(x: int, y: int, w: int, h: int, lm: list) -> bool:
 def _is_partial_face(x: int, y: int, w: int, h: int,
                      frame_w: int, frame_h: int,
                      max_clip_ratio: float = 0.30) -> bool:
-    """
-    Return True when > max_clip_ratio of the face box is clipped by the frame boundary.
-    Partial/occluded faces at the frame edge produce poor ArcFace embeddings.
-    """
     clip_x = max(0, -x) + max(0, (x + w) - frame_w)
     clip_y = max(0, -y) + max(0, (y + h) - frame_h)
-    # Conservative upper bound on clipped area
     clipped = clip_x * h + clip_y * w
     face_area = max(w * h, 1)
     return (clipped / face_area) > max_clip_ratio
+
+
+def _face_sharpness(frame: np.ndarray, x: int, y: int, w: int, h: int) -> float:
+    """Return Laplacian variance of the face crop — used as quality gate."""
+    fh, fw = frame.shape[:2]
+    x1c = max(0, x);     y1c = max(0, y)
+    x2c = min(fw, x+w);  y2c = min(fh, y+h)
+    crop = frame[y1c:y2c, x1c:x2c]
+    if crop.size == 0:
+        return 0.0
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    return float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -219,12 +220,9 @@ def _scrfd_infer(frame: np.ndarray,
                  score_thresh: float = _SCORE_THRESHOLD) -> list:
     """
     Run SCRFD on a BGR frame. Returns raw decoded detections in ORIGINAL frame
-    coordinates before any quality filtering.
+    coordinates before quality filtering.
 
     Each element: (x1_f, y1_f, x2_f, y2_f, conf, kps_10floats)
-        x1/y1/x2/y2  — float, original-frame pixel coords (may be slightly outside bounds)
-        conf         — float [0, 1]
-        kps_10floats — [rx,ry, lx,ly, nx,ny, rmx,rmy, lmx,lmy]  (SCRFD = ArcFace order)
     """
     if _scrfd_session is None:
         return []
@@ -232,13 +230,12 @@ def _scrfd_infer(frame: np.ndarray,
     blob, scale = _preprocess(frame)
     outputs = _scrfd_session.run(None, {_INPUT_NAME: blob})
 
-    # Layout: outputs[0:3] scores (N,1) | outputs[3:6] bboxes (N,4) | outputs[6:9] kps (N,10)
     raw = []
     for i, stride in enumerate(_STRIDES):
-        scores  = outputs[i][:, 0]       # (N,)
-        bboxes  = outputs[i + 3]         # (N, 4)
-        kps     = outputs[i + 6]         # (N, 10)
-        anchors = _ANCHOR_MAP[stride]    # (N, 2) — (gx, gy)
+        scores  = outputs[i][:, 0]
+        bboxes  = outputs[i + 3]
+        kps     = outputs[i + 6]
+        anchors = _ANCHOR_MAP[stride]
 
         mask = scores > score_thresh
         if not mask.any():
@@ -249,17 +246,14 @@ def _scrfd_infer(frame: np.ndarray,
         kp  = kps[mask]
         anc = anchors[mask]
 
-        # Anchor centres in padded-input space
         cx = (anc[:, 0] + 0.5) * stride
         cy = (anc[:, 1] + 0.5) * stride
 
-        # Decode bounding box (distance offsets → absolute padded coords → original)
         x1 = (cx - bb[:, 0] * stride) / scale
         y1 = (cy - bb[:, 1] * stride) / scale
         x2 = (cx + bb[:, 2] * stride) / scale
         y2 = (cy + bb[:, 3] * stride) / scale
 
-        # Decode keypoints (grid offsets → absolute padded coords → original)
         kps_dec = np.zeros_like(kp)
         for j in range(5):
             kps_dec[:, 2*j]   = (anc[:, 0] + kp[:, 2*j])   * stride / scale
@@ -277,41 +271,58 @@ def _scrfd_infer(frame: np.ndarray,
 
 
 def _raw_to_xywh(raw: list, frame_w: int, frame_h: int,
-                 min_size: int) -> tuple:
+                 min_size: int, frame: np.ndarray | None = None) -> tuple:
     """
     Convert raw detections → (x, y, w, h, lm, conf) tuples after quality gates.
-    Returns (faces_list, boxes_xywh_list, scores_list) ready for NMS.
+    Returns (faces_list, boxes_xywh_list, scores_list).
+
+    Quality gates applied (in order):
+        1. Minimum box size
+        2. Partial-face clip ratio
+        3. Aspect ratio  0.5 – 1.8  (tighter to kill FP on walls/plants)
+        4. Post-decode confidence >= _POST_NMS_THRESH
+        5. Landmark validation (>=4/5 within ±25% pad)
+        6. Face crop sharpness >= _MIN_SHARPNESS  (if frame provided)
     """
     faces      = []
     boxes_xywh = []
     scores_lst = []
 
     for (x1, y1, x2, y2, conf, kps) in raw:
-        # Clamp to frame
-        x1c = max(0.0, x1);        y1c = max(0.0, y1)
-        x2c = min(float(frame_w), x2); y2c = min(float(frame_h), y2)
+        # Gate 4: confidence
+        if conf < _POST_NMS_THRESH:
+            continue
 
+        x1c = max(0.0, x1);          y1c = max(0.0, y1)
+        x2c = min(float(frame_w), x2); y2c = min(float(frame_h), y2)
         bw = x2c - x1c
         bh = y2c - y1c
 
-        # Minimum size gate
+        # Gate 1: minimum size
         if bw < min_size or bh < min_size:
             continue
 
-        # Reject heavily-clipped partial faces at frame borders
+        # Gate 2: partial face
         if _is_partial_face(int(x1), int(y1), int(x2 - x1), int(y2 - y1),
                              frame_w, frame_h):
             continue
 
-        # Aspect ratio — human face: roughly square to portrait
+        # Gate 3: tighter aspect ratio (was 0.4–2.2, now 0.5–1.8)
         aspect = bw / (bh + 1e-5)
-        if aspect < 0.4 or aspect > 2.2:
+        if aspect < 0.45 or aspect > 1.9:
             continue
 
         ix = int(x1c);  iy = int(y1c)
         iw = int(bw);   ih = int(bh)
 
+        # Gate 5: landmark validation
         lm = kps if _validate_landmarks(ix, iy, iw, ih, kps) else None
+
+        # Gate 6: sharpness (only when frame is supplied)
+        if frame is not None and lm is not None:
+            sharp = _face_sharpness(frame, ix, iy, iw, ih)
+            if sharp < _MIN_SHARPNESS:
+                lm = None   # mark as no-landmark but still allow detection box
 
         faces.append((ix, iy, iw, ih, lm, conf))
         boxes_xywh.append((ix, iy, iw, ih))
@@ -321,17 +332,17 @@ def _raw_to_xywh(raw: list, frame_w: int, frame_h: int,
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  PUBLIC API  — identical signatures to the old YuNet wrapper
+#  PUBLIC API
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_faces_dnn(frame: np.ndarray, smooth: bool = True, min_size: int = 20):
+def get_faces_dnn(frame: np.ndarray, smooth: bool = True, min_size: int = 18):
     """
     Detect faces using SCRFD-10G with adaptive CCTV preprocessing.
 
     Returns: list of (x, y, w, h, landmarks_or_None, conf)
         landmarks = list of 10 floats [rx,ry, lx,ly, nx,ny, rmx,rmy, lmx,lmy]
-                    or None if landmark validation fails
-        x, y, w, h — int, (top-left, width, height)  ← same as old YuNet output
+                    or None if quality gates fail
+        x, y, w, h — int, top-left + dimensions
     """
     global _prev_boxes
 
@@ -343,10 +354,10 @@ def get_faces_dnn(frame: np.ndarray, smooth: bool = True, min_size: int = 20):
 
     raw = _scrfd_infer(enhanced)
 
-    # Convert + quality filter
-    current_faces, boxes_xywh, scores_lst = _raw_to_xywh(raw, fw, fh, min_size)
+    # Convert + quality filter (pass original frame for sharpness gate)
+    current_faces, boxes_xywh, scores_lst = _raw_to_xywh(raw, fw, fh, min_size, enhanced)
 
-    # NMS
+    # Strong NMS
     kept = _nms(boxes_xywh, scores_lst, _NMS_IOU)
     current_faces = [current_faces[i] for i in kept]
 
@@ -358,13 +369,13 @@ def get_faces_dnn(frame: np.ndarray, smooth: bool = True, min_size: int = 20):
         _prev_boxes = []
         return []
 
-    # ── EMA tracking — link new detections to previous positions ─────────────
+    # ── EMA tracking ─────────────────────────────────────────────────────────
     smoothed  = []
     unmatched = list(_prev_boxes)
 
     for c in current_faces:
         c_box  = c[0:4]
-        c_rest = c[4:]          # (landmarks, conf)
+        c_rest = c[4:]
         best_iou, best_idx = 0.0, -1
 
         for i, p in enumerate(unmatched):
@@ -380,29 +391,27 @@ def get_faces_dnn(frame: np.ndarray, smooth: bool = True, min_size: int = 20):
             )
             smoothed.append((*s_box, *c_rest))
         else:
-            smoothed.append(c)   # new face — no prior to blend
+            smoothed.append(c)
 
     _prev_boxes = smoothed
     return smoothed
 
 
 def clear_detector_state():
-    """Reset EMA tracking state. Call on camera stop or model reset."""
-    global _prev_boxes
-    _prev_boxes = []
+    """Reset EMA tracking and enhancement cache. Call on camera stop/reset."""
+    global _prev_boxes, _last_enhanced, _enhance_counter
+    _prev_boxes      = []
+    _last_enhanced   = None
+    _enhance_counter = 0
 
 
-def detect_faces_multiscale(frame: np.ndarray, min_size: int = 20) -> list:
+def detect_faces_multiscale(frame: np.ndarray, min_size: int = 18) -> list:
     """
     High-recall detection for live streaming and CCTV.
 
-    SCRFD-10G natively handles multiple scales via its 3-stride architecture
-    (stride 8 = near/large faces, stride 32 = far/small faces), so a single
-    960-px inference already replaces the old YuNet multi-scale loop.
-
-    An additional 1.5× upscale pass is performed for frames > 480 px to
-    improve recall on very distant faces (e.g. far-end CCTV).
-    Both passes share global NMS to eliminate cross-pass duplicates.
+    Pass 1: Standard inference at _INPUT_SIZE.
+    Pass 2: 1.5× upscale — ONLY when no/tiny faces found in pass 1 (saves CPU).
+    Both passes share global NMS.
 
     Returns: list of (x, y, w, h, landmarks_or_None, conf)
     """
@@ -412,17 +421,18 @@ def detect_faces_multiscale(frame: np.ndarray, min_size: int = 20) -> list:
     fh, fw = frame.shape[:2]
     enhanced = _enhance_frame(frame)
 
-    # ── Pass 1: standard 960-px inference ────────────────────────────────────
+    # ── Pass 1 ───────────────────────────────────────────────────────────────
     raw1 = _scrfd_infer(enhanced, score_thresh=_SCORE_THRESHOLD)
+    faces1, _, _ = _raw_to_xywh(raw1, fw, fh, min_size, enhanced)
 
-    # ── Pass 2: 1.5× upscale for far/small faces (CCTV wide-angle shots) ────
+    # ── Pass 2: upscale ONLY when needed ─────────────────────────────────────
     raw2 = []
-    if max(fw, fh) > 480:
-        up   = 1.5
-        nw2  = min(int(fw * up), 1920)
-        nh2  = min(int(fh * up), 1920)
+    if fw > 720 and (len(faces1) == 0 or all(f[2] < 40 for f in faces1)):
+        up       = 1.5
+        nw2      = min(int(fw * up), 1920)
+        nh2      = min(int(fh * up), 1920)
         up_frame = cv2.resize(enhanced, (nw2, nh2), interpolation=cv2.INTER_LINEAR)
-        inv  = 1.0 / up
+        inv      = 1.0 / up
         for (x1, y1, x2, y2, conf, kps) in _scrfd_infer(up_frame,
                                                           score_thresh=_SCORE_THRESHOLD):
             raw2.append((
@@ -435,7 +445,7 @@ def detect_faces_multiscale(frame: np.ndarray, min_size: int = 20) -> list:
     if not all_raw:
         return []
 
-    # ── Convert + quality filter + global NMS ────────────────────────────────
-    faces, boxes_xywh, scores_lst = _raw_to_xywh(all_raw, fw, fh, min_size)
+    # ── Global NMS across both passes ────────────────────────────────────────
+    faces, boxes_xywh, scores_lst = _raw_to_xywh(all_raw, fw, fh, min_size, enhanced)
     kept = _nms(boxes_xywh, scores_lst, _NMS_IOU)
     return [faces[i] for i in kept]

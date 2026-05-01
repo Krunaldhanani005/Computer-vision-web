@@ -40,17 +40,19 @@ try:
     # Indexes
     known_persons.create_index("name", unique=True)
     known_persons.create_index([("last_seen", DESCENDING)])
-    
+
     known_attendance.create_index([("name", ASCENDING), ("date", ASCENDING)], unique=True)
-    
+    known_attendance.create_index("date")
+
     unknown_persons.create_index("temp_id", unique=True)
     unknown_persons.create_index([("last_seen", DESCENDING)])
-    
+    unknown_persons.create_index("date")
+
     unknown_snapshots.create_index("temp_id")
     unknown_snapshots.create_index([("timestamp", DESCENDING)])
 
     blacklist_persons.create_index("name", unique=True)
-    
+
     blacklist_alerts.create_index([("alert_time", DESCENDING)])
     blacklist_alerts.create_index("name")
 
@@ -178,13 +180,19 @@ def upsert_known(name: str, confidence: float, snapshot_path: str):
     )
 
     if known_attendance is not None:
+        att_update = {
+            "$setOnInsert": {"first_seen_today": now, "person_id": name},
+            "$set":         {"last_seen_today": now},
+            "$inc":         {"detection_count": 1},
+        }
+        if snapshot_path:
+            att_update["$set"]["snapshot"] = snapshot_path
+            att_update["$push"] = {
+                "snapshots": {"$each": [snapshot_path], "$slice": -5}
+            }
         known_attendance.update_one(
             {"name": name, "date": date_str},
-            {
-                "$setOnInsert": {"first_seen_today": now},
-                "$set": {"last_seen_today": now, "snapshot": snapshot_path},
-                "$inc": {"detection_count": 1}
-            },
+            att_update,
             upsert=True
         )
 
@@ -225,6 +233,34 @@ def get_known_stats():
         "recognized_today": known_persons.count_documents({"attendance_days": today}),
     }
 
+# ── Attendance (day-wise known) ───────────────────────────────────────────────
+
+def get_attendance_by_date(date_str: str, search: str = "", page: int = 1, per_page: int = 50):
+    if known_attendance is None: return [], 0
+    query = {"date": date_str}
+    if search:
+        query["name"] = {"$regex": search, "$options": "i"}
+    total = known_attendance.count_documents(query)
+    skip  = (page - 1) * per_page
+    docs  = list(
+        known_attendance.find(query, {"_id": 0, "encodings": 0})
+        .sort("detection_count", DESCENDING)
+        .skip(skip).limit(per_page)
+    )
+    for d in docs:
+        if "first_seen_today" in d and hasattr(d["first_seen_today"], "strftime"):
+            d["first_seen"] = to_ist(d["first_seen_today"]).strftime("%H:%M:%S")
+        if "last_seen_today" in d and hasattr(d["last_seen_today"], "strftime"):
+            d["last_seen"] = to_ist(d["last_seen_today"]).strftime("%H:%M:%S")
+        snaps = d.get("snapshots", [])
+        if snaps and not d.get("snapshot"):
+            d["snapshot"] = snaps[-1]
+    return docs, total
+
+def get_attendance_dates() -> list:
+    if known_attendance is None: return []
+    return sorted(known_attendance.distinct("date"), reverse=True)
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  UNKNOWN PERSONS & SNAPSHOTS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -232,11 +268,12 @@ def get_known_stats():
 def upsert_unknown(temp_id: str, snapshot_path: str):
     if unknown_persons is None: return
     now = datetime.datetime.utcnow()
-    
+    date_str = to_ist(now).strftime("%Y-%m-%d")
+
     unknown_persons.update_one(
         {"temp_id": temp_id},
         {
-            "$setOnInsert": {"first_seen": now},
+            "$setOnInsert": {"first_seen": now, "date": date_str},
             "$set": {"last_seen": now, "latest_snapshot": snapshot_path},
             "$inc": {"detection_count": 1}
         },
@@ -276,11 +313,31 @@ def get_unknown_dashboard(search: str = "", sort_by: str = "last_seen", page: in
 
 def get_unknown_stats():
     if unknown_persons is None: return {}
-    today_start = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today = to_ist(datetime.datetime.utcnow()).strftime("%Y-%m-%d")
     return {
         "total_unknown": unknown_persons.count_documents({}),
-        "unknown_today": unknown_persons.count_documents({"first_seen": {"$gte": today_start}}),
+        "unknown_today": unknown_persons.count_documents({"date": today}),
     }
+
+def get_unknown_by_date(date_str: str, page: int = 1, per_page: int = 50):
+    if unknown_persons is None: return [], 0
+    query = {"date": date_str}
+    total = unknown_persons.count_documents(query)
+    skip  = (page - 1) * per_page
+    docs  = list(
+        unknown_persons.find(query, {"_id": 0})
+        .sort("detection_count", DESCENDING)
+        .skip(skip).limit(per_page)
+    )
+    for d in docs:
+        for key in ("first_seen", "last_seen"):
+            if key in d and hasattr(d[key], "strftime"):
+                d[key + "_fmt"] = to_ist(d[key]).strftime("%H:%M:%S")
+    return docs, total
+
+def get_unknown_dates() -> list:
+    if unknown_persons is None: return []
+    return sorted(unknown_persons.distinct("date"), reverse=True)
 
 def delete_all_unknown_logs():
     if unknown_persons is None: return False
@@ -345,9 +402,142 @@ def get_blacklist_stats():
         "unique_persons": len(blacklist_alerts.distinct("name")),
     }
 
+def get_blacklist_dates() -> list:
+    if blacklist_alerts is None: return []
+    dates = set()
+    for doc in blacklist_alerts.find({}, {"alert_time": 1, "_id": 0}):
+        at = doc.get("alert_time")
+        if at and hasattr(at, "strftime"):
+            dates.add(to_ist(at).strftime("%Y-%m-%d"))
+    return sorted(dates, reverse=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  DAILY SUMMARY
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_daily_summary(date_str: str) -> dict:
+    summary = {
+        "date":             date_str,
+        "attendance_count": 0,
+        "known_count":      0,
+        "unknown_count":    0,
+        "blacklist_count":  0,
+    }
+    try:
+        dt     = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+        dt_end = dt + datetime.timedelta(days=1)
+    except ValueError:
+        return summary
+
+    if known_attendance is not None:
+        summary["attendance_count"] = known_attendance.count_documents({"date": date_str})
+    if known_persons is not None:
+        summary["known_count"] = known_persons.count_documents({"attendance_days": date_str})
+    if unknown_persons is not None:
+        summary["unknown_count"] = unknown_persons.count_documents({"date": date_str})
+    if blacklist_alerts is not None:
+        summary["blacklist_count"] = blacklist_alerts.count_documents(
+            {"alert_time": {"$gte": dt, "$lt": dt_end}}
+        )
+    return summary
+
+def get_summary_dates() -> list:
+    dates = set()
+    if known_attendance is not None:
+        dates.update(known_attendance.distinct("date"))
+    if unknown_persons is not None:
+        dates.update(unknown_persons.distinct("date"))
+    if blacklist_alerts is not None:
+        for doc in blacklist_alerts.find({}, {"alert_time": 1, "_id": 0}):
+            at = doc.get("alert_time")
+            if at and hasattr(at, "strftime"):
+                dates.add(to_ist(at).strftime("%Y-%m-%d"))
+    return sorted(dates, reverse=True)
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  EXPORT HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
+
+def export_attendance_xlsx(date_str: str) -> bytes:
+    """Generate attendance_YYYY-MM-DD.xlsx with Attendance / Unknown / Blacklist sheets."""
+    try:
+        import io
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+
+        wb = openpyxl.Workbook()
+
+        hdr_font = Font(bold=True, color="FFFFFF")
+        hdr_fill = PatternFill("solid", fgColor="363062")
+        hdr_aln  = Alignment(horizontal="center")
+
+        def _style_header(ws, headers):
+            ws.append(headers)
+            for col_idx in range(1, len(headers) + 1):
+                cell = ws.cell(1, col_idx)
+                cell.font  = hdr_font
+                cell.fill  = hdr_fill
+                cell.alignment = hdr_aln
+
+        def _autowidth(ws):
+            for col in ws.columns:
+                width = max((len(str(c.value)) if c.value else 0) for c in col)
+                ws.column_dimensions[col[0].column_letter].width = min(width + 4, 45)
+
+        # ── Sheet 1: Attendance ──────────────────────────────────────────────
+        ws1 = wb.active
+        ws1.title = "Attendance"
+        _style_header(ws1, ["Name", "First Seen", "Last Seen", "Detection Count"])
+        if known_attendance is not None:
+            for doc in (known_attendance.find({"date": date_str}, {"_id": 0})
+                        .sort("detection_count", DESCENDING)):
+                first = (to_ist(doc["first_seen_today"]).strftime("%H:%M:%S")
+                         if hasattr(doc.get("first_seen_today"), "strftime") else "")
+                last  = (to_ist(doc["last_seen_today"]).strftime("%H:%M:%S")
+                         if hasattr(doc.get("last_seen_today"), "strftime") else "")
+                ws1.append([doc.get("name", ""), first, last, doc.get("detection_count", 0)])
+        _autowidth(ws1)
+
+        # ── Sheet 2: Unknown ─────────────────────────────────────────────────
+        ws2 = wb.create_sheet("Unknown")
+        _style_header(ws2, ["Unknown ID", "First Seen", "Last Seen", "Detection Count"])
+        if unknown_persons is not None:
+            for doc in (unknown_persons.find({"date": date_str}, {"_id": 0})
+                        .sort("detection_count", DESCENDING)):
+                first = (to_ist(doc["first_seen"]).strftime("%H:%M:%S")
+                         if hasattr(doc.get("first_seen"), "strftime") else "")
+                last  = (to_ist(doc["last_seen"]).strftime("%H:%M:%S")
+                         if hasattr(doc.get("last_seen"), "strftime") else "")
+                ws2.append([doc.get("temp_id", ""), first, last, doc.get("detection_count", 0)])
+        _autowidth(ws2)
+
+        # ── Sheet 3: Blacklist ───────────────────────────────────────────────
+        ws3 = wb.create_sheet("Blacklist")
+        _style_header(ws3, ["Name", "Alert Time", "Camera Source", "Zone"])
+        if blacklist_alerts is not None:
+            try:
+                dt     = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+                dt_end = dt + datetime.timedelta(days=1)
+                for doc in (blacklist_alerts.find(
+                        {"alert_time": {"$gte": dt, "$lt": dt_end}}, {"_id": 0})
+                        .sort("alert_time", DESCENDING)):
+                    t = (to_ist(doc["alert_time"]).strftime("%H:%M:%S")
+                         if hasattr(doc.get("alert_time"), "strftime") else "")
+                    ws3.append([doc.get("name", ""), t,
+                                doc.get("camera_source", ""), doc.get("zone_id", "")])
+            except ValueError:
+                pass
+        _autowidth(ws3)
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf.getvalue()
+    except Exception as e:
+        print(f"[export_xlsx] Error: {e}")
+        return b""
+
 
 def export_known_csv() -> str:
     if known_persons is None: return "name,last_seen,present_count,total_detections\n"

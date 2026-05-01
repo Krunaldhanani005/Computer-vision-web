@@ -123,7 +123,21 @@ restricted_frame_counter = 0
 # Async recognition state
 fr_executor    = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 fr_future      = None
-fr_last_results: list = []
+fr_last_results: list  = []   # latest recognized results (name + label)
+fr_detect_boxes: list  = []   # latest raw detection boxes (for immediate display)
+
+# ── FR streaming performance ───────────────────────────────────────────────────
+_DISPLAY_W       = 800         # display output width — slightly reduced for faster JPEG encode
+_FR_RECOG_EVERY  = 5           # submit ArcFace every Nth detection frame
+_FR_DETECT_EVERY = 2           # run SCRFD only every Nth raw frame (halves detector cost)
+_fr_detect_count = 0           # raw frame counter for detection skip
+_fr_recog_count  = 0           # detection-frame counter for recognition interval
+_fr_recog_cache: list = []     # [{box,name,type,conf,ts}] — reuse identity for latched faces
+_RECOG_CACHE_TTL = 3.0         # seconds to reuse a cached identity
+_zone_cache_pts: list | None = None   # zone points cached per stream; avoids per-frame DB hit
+_zone_cache_frame = 0          # frame counter for zone refresh
+_ZONE_CACHE_EVERY = 60         # refresh zone every 60 raw frames (~2 s at 30 fps)
+
 
 ra_executor    = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 ra_future      = None
@@ -142,6 +156,130 @@ def _padded_crop(frame, x, y, w, h, pad: float = 0.15):
 
 # Debug overlay info shared between async task and draw loop
 _fr_debug_persons: list = []   # [(x1,y1,x2,y2), ...] in original frame coords
+
+
+# ── Recognition result cache helpers (Opt 3) ──────────────────────────────────
+def _box_iou(a: tuple, b: tuple) -> float:
+    """IoU for two (x, y, w, h) boxes."""
+    xA = max(a[0], b[0]); yA = max(a[1], b[1])
+    xB = min(a[0]+a[2], b[0]+b[2]); yB = min(a[1]+a[3], b[1]+b[3])
+    inter = max(0, xB-xA) * max(0, yB-yA)
+    union = a[2]*a[3] + b[2]*b[3] - inter
+    return inter / (union + 1e-5)
+
+
+def _get_cached_recog(x: int, y: int, w: int, h: int) -> dict | None:
+    """Return a cached recognition entry IoU-matching the box (TTL-gated), or None."""
+    global _fr_recog_cache
+    now = time.monotonic()
+    _fr_recog_cache = [e for e in _fr_recog_cache if (now - e["ts"]) < _RECOG_CACHE_TTL]
+    box = (x, y, w, h)
+    for e in _fr_recog_cache:
+        if _box_iou(box, e["box"]) > 0.40:
+            return e
+    return None
+
+
+def _set_cached_recog(x: int, y: int, w: int, h: int,
+                       name: str, rtype: str, conf: float):
+    """Insert or refresh a recognition result in the identity cache."""
+    global _fr_recog_cache
+    now = time.monotonic()
+    box = (x, y, w, h)
+    for e in _fr_recog_cache:
+        if _box_iou(box, e["box"]) > 0.40:
+            e["box"] = box; e["name"] = name; e["type"] = rtype
+            e["conf"] = conf; e["ts"]   = now
+            return
+    _fr_recog_cache.append({"box": box, "name": name, "type": rtype,
+                             "conf": conf, "ts": now})
+
+
+# ── Lightweight display-level IoU + EMA tracker (Opt 3) ───────────────────────
+class _FRDisplayTracker:
+    """Per-frame EMA tracker for detection box smoothing.
+
+    Reduces jitter in SCRFD output without touching recognition accuracy.
+    Runs synchronously every frame on the raw detect boxes before drawing.
+    """
+    _ALPHA    = 0.65   # weight on new detection (higher → more responsive)
+    _IOU_LINK = 0.25   # min IoU to link a detection to an existing track
+    _MAX_AGE  = 6      # frames a track survives without a matching detection
+
+    def __init__(self):
+        self._tracks: list = []   # [{box:(x,y,w,h), age:int}]
+
+    def update(self, detections: list) -> list:
+        for t in self._tracks:
+            t["age"] += 1
+        self._tracks = [t for t in self._tracks if t["age"] <= self._MAX_AGE]
+
+        if not detections:
+            return []
+
+        used = set()
+        out  = []
+        a    = self._ALPHA
+
+        for det in detections:
+            dx, dy, dw, dh = det[0], det[1], det[2], det[3]
+            rest = det[4:]
+
+            best_iou, best_t = 0.0, None
+            for t in self._tracks:
+                if id(t) in used:
+                    continue
+                iou = _box_iou((dx, dy, dw, dh), t["box"])
+                if iou > best_iou:
+                    best_iou, best_t = iou, t
+
+            if best_t is not None and best_iou >= self._IOU_LINK:
+                px, py, pw, ph = best_t["box"]
+                sx = int(a * dx + (1 - a) * px)
+                sy = int(a * dy + (1 - a) * py)
+                sw = int(a * dw + (1 - a) * pw)
+                sh = int(a * dh + (1 - a) * ph)
+                best_t["box"] = (sx, sy, sw, sh)
+                best_t["age"] = 0
+                used.add(id(best_t))
+                out.append((sx, sy, sw, sh) + rest)
+            else:
+                new_t = {"box": (dx, dy, dw, dh), "age": 0}
+                self._tracks.append(new_t)
+                used.add(id(new_t))
+                out.append(det)
+
+        return out
+
+    def reset(self):
+        self._tracks.clear()
+
+
+_fr_display_tracker = _FRDisplayTracker()
+
+
+def _remap_recog_to_boxes(results: list, det_boxes: list,
+                           iou_min: float = 0.25) -> list:
+    """Remap stale recognition label boxes to the nearest current detected box.
+
+    Ensures labels follow moving faces in real time between recognition updates,
+    without waiting for the next ArcFace inference cycle.
+    """
+    if not results or not det_boxes:
+        return results
+    remapped = []
+    for res in results:
+        rx, ry, rw, rh = res["box"]
+        best_iou, best_box = 0.0, None
+        for det in det_boxes:
+            iou = _box_iou((rx, ry, rw, rh), (det[0], det[1], det[2], det[3]))
+            if iou > best_iou:
+                best_iou, best_box = iou, (det[0], det[1], det[2], det[3])
+        if best_box is not None and best_iou >= iou_min:
+            remapped.append({**res, "box": best_box})
+        else:
+            remapped.append(res)
+    return remapped
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -232,12 +370,16 @@ def api_report_known_stats():
 
 @app.route("/api/report/unknown")
 def api_report_unknown():
-    from models.face_recognition.fr_database import get_unknown_dashboard
-    search   = request.args.get("search", "").strip()
-    sort_by  = request.args.get("sort", "last_seen")
-    page     = int(request.args.get("page", 1))
-    per_page = int(request.args.get("per_page", 50))
-    docs, total = get_unknown_dashboard(search, sort_by, page, per_page)
+    from models.face_recognition.fr_database import get_unknown_dashboard, get_unknown_by_date
+    search      = request.args.get("search", "").strip()
+    sort_by     = request.args.get("sort", "last_seen")
+    date_filter = request.args.get("date", "").strip()
+    page        = int(request.args.get("page", 1))
+    per_page    = int(request.args.get("per_page", 50))
+    if date_filter:
+        docs, total = get_unknown_by_date(date_filter, page, per_page)
+    else:
+        docs, total = get_unknown_dashboard(search, sort_by, page, per_page)
     return jsonify({"data": docs, "total": total, "page": page, "per_page": per_page})
 
 @app.route("/api/report/unknown/delete_all", methods=["POST"])
@@ -292,6 +434,76 @@ def api_export_blacklist():
     resp = make_response(csv_data)
     resp.headers["Content-Type"] = "text/csv"
     resp.headers["Content-Disposition"] = "attachment; filename=blacklist_alerts_report.csv"
+    return resp
+
+
+# ── Attendance (day-wise) ──────────────────────────────────────────────────────
+@app.route("/api/report/attendance")
+def api_report_attendance():
+    from models.face_recognition.fr_database import get_attendance_by_date, to_ist
+    import datetime as _dt
+    date_str = request.args.get("date", "").strip()
+    search   = request.args.get("search", "").strip()
+    page     = int(request.args.get("page", 1))
+    per_page = int(request.args.get("per_page", 50))
+    if not date_str:
+        date_str = to_ist(_dt.datetime.utcnow()).strftime("%Y-%m-%d")
+    docs, total = get_attendance_by_date(date_str, search, page, per_page)
+    return jsonify({"data": docs, "total": total, "page": page, "per_page": per_page, "date": date_str})
+
+
+@app.route("/api/report/attendance/dates")
+def api_attendance_dates():
+    from models.face_recognition.fr_database import get_attendance_dates
+    return jsonify({"dates": get_attendance_dates()})
+
+
+@app.route("/api/report/unknown/dates")
+def api_unknown_dates():
+    from models.face_recognition.fr_database import get_unknown_dates
+    return jsonify({"dates": get_unknown_dates()})
+
+
+@app.route("/api/report/blacklist/dates")
+def api_blacklist_dates():
+    from models.face_recognition.fr_database import get_blacklist_dates
+    return jsonify({"dates": get_blacklist_dates()})
+
+
+# ── Daily Summary ──────────────────────────────────────────────────────────────
+@app.route("/api/report/summary")
+def api_report_summary():
+    from models.face_recognition.fr_database import get_daily_summary, to_ist
+    import datetime as _dt
+    date_str = request.args.get("date", "").strip()
+    if not date_str:
+        date_str = to_ist(_dt.datetime.utcnow()).strftime("%Y-%m-%d")
+    return jsonify(get_daily_summary(date_str))
+
+
+@app.route("/api/report/summary/dates")
+def api_summary_dates():
+    from models.face_recognition.fr_database import get_summary_dates
+    return jsonify({"dates": get_summary_dates()})
+
+
+# ── Excel Export ───────────────────────────────────────────────────────────────
+@app.route("/api/report/export/xlsx")
+def api_export_xlsx():
+    from models.face_recognition.fr_database import export_attendance_xlsx, to_ist
+    from flask import make_response
+    import datetime as _dt
+    date_str = request.args.get("date", "").strip()
+    if not date_str:
+        date_str = to_ist(_dt.datetime.utcnow()).strftime("%Y-%m-%d")
+    data = export_attendance_xlsx(date_str)
+    if not data:
+        return jsonify({"error": "Failed to generate Excel file"}), 500
+    resp = make_response(data)
+    resp.headers["Content-Type"] = (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    resp.headers["Content-Disposition"] = f"attachment; filename=attendance_{date_str}.xlsx"
     return resp
 
 @app.route("/ra-report")
@@ -437,107 +649,151 @@ def api_alerts():
 #  FACE RECOGNITION STREAM  (polygon zone-aware)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _fr_async_task(orig_frame: np.ndarray, frame_w: int, frame_h: int,
-                   zone_snapshot: list):
+def _fr_detect_zone_roi(orig_frame: np.ndarray, zone_snapshot: list,
+                        frame_w: int, frame_h: int) -> list:
     """
-    Background recognition task.
+    SYNC detection step — called every _FR_DETECT_EVERY raw frame for immediate box display.
 
-    zone_snapshot: copy of active zone points captured at submission time.
-        Using a snapshot (not re-reading zone_manager inside the task) prevents
-        a race where the zone is cleared while the task is in-flight.
+    Strategy:
+        1. Detect on full frame (not just ROI crop) to avoid coord-mapping bugs.
+        2. Apply zone polygon filter AFTER detection + NMS (not before) to prevent
+           zone boundary from generating duplicate detections.
+        3. Run 1.5× upscale pass only when no/tiny faces found in pass 1.
 
-    Quality gates (all must pass):
-      1. Detection confidence >= 0.42
-      2. Face size >= 50x50 px
-      3. Valid 5-point landmarks
-      4. Face aspect ratio 0.4–2.0
-      5. Sharpness (Laplacian) >= 12
-      6. Skin-tone ratio >= 15%  (eliminates glass/furniture CCTV false positives)
-      7. (zone snapshot guard)
-      8. Face centre inside zone polygon
+    Returns list of (x, y, w, h, landmarks_or_None, conf) in original-frame coords.
     """
-    from models.face_recognition.face_detector import detect_faces_multiscale
+    from models.face_recognition.face_detector import get_faces_dnn
+    from zone_manager import zone_manager as _zm
 
+    if not zone_snapshot or len(zone_snapshot) < 3:
+        return []
+
+    pixel_pts = [
+        (int(p["x"] * frame_w), int(p["y"] * frame_h))
+        for p in zone_snapshot
+    ]
+
+    # Detect on full frame — avoid ROI crop creating coordinate mapping drift
+    all_faces = get_faces_dnn(orig_frame, smooth=False, min_size=18)
+
+    # Apply upscale pass for far faces when needed
+    if not all_faces or all(f[2] < 40 for f in all_faces):
+        from models.face_recognition.face_detector import _scrfd_infer, _raw_to_xywh, _nms, _NMS_IOU
+        up       = 1.5
+        nw2      = min(int(frame_w * up), 1920)
+        nh2      = min(int(frame_h * up), 1920)
+        up_frame = cv2.resize(orig_frame, (nw2, nh2), interpolation=cv2.INTER_LINEAR)
+        inv      = 1.0 / up
+        raw_up   = []
+        for (x1, y1, x2, y2, conf, kps) in _scrfd_infer(up_frame):
+            raw_up.append((x1 * inv, y1 * inv, x2 * inv, y2 * inv, conf, [v * inv for v in kps]))
+        if raw_up:
+            up_faces, up_boxes, up_scores = _raw_to_xywh(raw_up, frame_w, frame_h, 18, orig_frame)
+            all_raw_boxes = [(f[0], f[1], f[2], f[3]) for f in all_faces] + up_boxes
+            all_raw_scores = [f[5] for f in all_faces] + up_scores
+            kept_idx = _nms(all_raw_boxes, all_raw_scores, _NMS_IOU)
+            merged = (all_faces + up_faces)
+            all_faces = [merged[i] for i in kept_idx]
+
+    # Filter: only keep faces whose centre is inside the zone polygon
+    in_zone = [f for f in all_faces if _zm.is_face_inside_zone((f[0], f[1], f[2], f[3]), pixel_pts)]
+    return in_zone
+
+
+def _fr_recog_task(orig_frame: np.ndarray, face_boxes: list,
+                   frame_w: int, frame_h: int, zone_snapshot: list) -> list:
+    """
+    ASYNC recognition step.
+    Takes pre-detected + zone-filtered face boxes from _fr_detect_zone_roi.
+    Deduplicates overlapping boxes via IoU before ArcFace to prevent same face
+    being recognised twice (root cause of duplicate 'Unknown' labels).
+
+    Returns list of {box, name, type, conf} dicts.
+    """
     results = []
 
-    # No zone at snapshot time → task should not have been submitted, but guard anyway
-    if zone_snapshot is None or len(zone_snapshot) < 3:
+    if not zone_snapshot or len(zone_snapshot) < 3 or not face_boxes:
         return results
 
-    face_boxes = detect_faces_multiscale(orig_frame, min_size=20)
+    fh_f, fw_f = orig_frame.shape[:2]
 
-    for face_data in face_boxes:
-        if len(face_data) < 5:
+    # ── Step A: IoU-based dedup on face_boxes BEFORE recognition ─────────────
+    # Prevents the same physical face from creating two tracker/recognition slots.
+    deduped_boxes: list = []
+    for fd in face_boxes:
+        if len(fd) < 5:
+            continue
+        x, y, w, h = fd[0], fd[1], fd[2], fd[3]
+        dup = False
+        for ex in deduped_boxes:
+            if _box_iou((x, y, w, h), (ex[0], ex[1], ex[2], ex[3])) > 0.50:
+                # Keep the higher-confidence one
+                if (float(fd[5]) if len(fd) >= 6 else 0.5) > (float(ex[5]) if len(ex) >= 6 else 0.5):
+                    deduped_boxes.remove(ex)
+                    deduped_boxes.append(fd)
+                dup = True
+                break
+        if not dup:
+            deduped_boxes.append(fd)
+
+    for face_data in deduped_boxes:
+        x, y, w, h  = face_data[0], face_data[1], face_data[2], face_data[3]
+        landmarks    = face_data[4]
+        det_conf     = float(face_data[5]) if len(face_data) >= 6 else 0.5
+
+        # Gate 1: confidence — raised from 0.20 to 0.30 to reduce FP
+        if det_conf < 0.30:
             continue
 
-        x, y, w, h = face_data[0], face_data[1], face_data[2], face_data[3]
-        landmarks  = face_data[4]
-        det_conf   = float(face_data[5]) if len(face_data) >= 6 else 0.5
-
-        # Gate 1: detection confidence — 0.20 matches lowered SCRFD score threshold
-        if det_conf < 0.20:
+        # Gate 2: minimum face size
+        if w < 18 or h < 18:
             continue
 
-        # Gate 2: minimum face size — 20px to catch far CCTV faces
-        if w < 20 or h < 20:
-            continue
-
-        # Gate 3: valid landmarks (strongest false-positive filter)
+        # Gate 3: valid landmarks (strongest FP filter — walls/plants fail this)
         if landmarks is None:
             continue
 
-        # Gate 4: aspect ratio
+        # Gate 4: aspect ratio — tighter range to kill profile/tilted FPs
         aspect = w / (h + 1e-5)
-        if aspect < 0.4 or aspect > 2.0:
+        if aspect < 0.45 or aspect > 1.9:
             continue
 
-        # Gate 5: sharpness — reject only severely motion-blurred frames
-        # Threshold kept low (8.0) so far/small CCTV faces (naturally soft) are not excluded
-        fh_f, fw_f = orig_frame.shape[:2]
-        x1c, y1c   = max(0, x), max(0, y)
-        x2c, y2c   = min(fw_f, x + w), min(fh_f, y + h)
-        face_crop  = orig_frame[y1c:y2c, x1c:x2c]
+        # Gate 5: face sharpness on raw crop
+        x1c = max(0, x);     y1c = max(0, y)
+        x2c = min(fw_f, x+w); y2c = min(fh_f, y+h)
+        face_crop = orig_frame[y1c:y2c, x1c:x2c]
         if face_crop.size == 0:
             continue
-        gray_crop  = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
-        blur_score = float(cv2.Laplacian(gray_crop, cv2.CV_64F).var())
+        blur_score = float(cv2.Laplacian(
+            cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var())
         if blur_score < 8.0:
             continue
 
-        # Gate 6: skin-tone filter — eliminates glass, furniture, signage false positives.
-        # Threshold lowered to 0.10 so far/small faces with CCTV colour cast are not rejected.
-        ycrcb_crop = cv2.cvtColor(face_crop, cv2.COLOR_BGR2YCrCb)
-        skin_mask  = cv2.inRange(
-            ycrcb_crop,
-            np.array([0,   133,  77], dtype=np.uint8),
-            np.array([255, 173, 127], dtype=np.uint8),
-        )
-        skin_ratio = float(np.count_nonzero(skin_mask)) / max(skin_mask.size, 1)
-        if skin_ratio < 0.10:
+        # Identity cache — skip ArcFace for faces seen within _RECOG_CACHE_TTL
+        cached = _get_cached_recog(x, y, w, h)
+        if cached is not None:
+            smooth_name, smooth_type, smooth_conf = _identity_tracker.update(
+                x, y, w, h, cached["name"], cached["type"], cached["conf"], orig_frame,
+                landmarks=landmarks, embedding=None,
+                camera_source=camera_source_config.get("type", "webcam"),
+                zone_id="Monitoring Zone",
+            )
+            _set_cached_recog(x, y, w, h, smooth_name, smooth_type, smooth_conf)
+            results.append({"box": (x, y, w, h), "name": smooth_name,
+                            "type": smooth_type, "conf": smooth_conf})
             continue
 
-        # Gate 8: face centre inside zone (using snapshot — no live zone_manager read)
-        from zone_manager import zone_manager as _zm
-        if not _zm.is_face_inside_zone((x, y, w, h),
-                                       [(int(p["x"] * frame_w), int(p["y"] * frame_h))
-                                        for p in zone_snapshot]):
-            continue
-
-        # Gate 7 (Fix #5): Frontal face check — both eyes present + eye dist >= 20px
-        from models.face_recognition.face_recognition_model import _is_frontal_face
-        if not _is_frontal_face(landmarks):
-            continue
-
-        # Recognize — returns (name, type, conf, dist, embedding)
+        # Full ArcFace recognition (slow path)
         raw_name, p_type, conf, dist, emb = recognize(orig_frame, face_data)
 
-        zone_id = "Monitoring Zone"
         smooth_name, smooth_type, smooth_conf = _identity_tracker.update(
             x, y, w, h, raw_name, p_type, conf, orig_frame,
             landmarks=landmarks, embedding=emb,
             camera_source=camera_source_config.get("type", "webcam"),
-            zone_id=zone_id,
+            zone_id="Monitoring Zone",
         )
+
+        _set_cached_recog(x, y, w, h, smooth_name, smooth_type, smooth_conf)
 
         results.append({
             "box":  (x, y, w, h),
@@ -575,47 +831,105 @@ def _draw_polygon_zone(frame: np.ndarray, points: list, frame_w: int, frame_h: i
 
 
 def generate_fr_frames():
-    """MJPEG generator — polygon zone-aware face recognition stream.
-
-    Detection accuracy priority: every frame triggers a new async detection
-    task as soon as the previous one completes (FRAME_SKIP = 1).
-    Results are displayed directly — no tracker interpolation between frames.
     """
-    global is_fr_streaming, fr_future, fr_last_results
+    MJPEG generator — optimised two-stage FR pipeline.
+
+    Stage 1 (sync, every _FR_DETECT_EVERY raw frames) — SCRFD → raw boxes → draw immediately.
+    Stage 2 (async, every _FR_RECOG_EVERY detection frames) — ArcFace → update labels.
+    Between detection frames the previous smoothed boxes are used for display (free).
+
+    Optimisations:
+      Opt 1 — Display resize     : MJPEG output at _DISPLAY_W wide.
+      Opt 2 — Detection skip     : SCRFD runs every 2nd raw frame.
+      Opt 3 — Recog interval     : ArcFace submitted every 5th detection frame.
+      Opt 4 — Identity cache     : latched faces skip ArcFace (2–3 s TTL).
+      Opt 5 — Zone cache         : zone loaded from DB only every 60 frames.
+      Opt 6 — Cond. upscale      : zone ROI upscaled only when no/tiny faces.
+      Opt 7 — JPEG 72 quality    : smaller MJPEG payload.
+    """
+    global is_fr_streaming, fr_future, fr_last_results, fr_detect_boxes
+    global _fr_detect_count, _fr_recog_count
+    global _zone_cache_pts, _zone_cache_frame
+
+    raw_frame_count = 0
 
     while is_fr_streaming:
         frame = camera_manager.get_latest_frame()
         if frame is None:
-            time.sleep(0.01)
+            time.sleep(0.005)
             continue
-        frame = frame.copy()
         fh, fw = frame.shape[:2]
+        raw_frame_count += 1
 
-        zone_points = zone_manager.load_zone()
+        # Opt 1: Scale display frame — detection still on full-res original
+        if fw > _DISPLAY_W:
+            ds     = _DISPLAY_W / fw
+            disp_h = int(fh * ds)
+            disp   = cv2.resize(frame, (_DISPLAY_W, disp_h), interpolation=cv2.INTER_LINEAR)
+        else:
+            ds   = 1.0
+            disp = frame.copy()
+        d_h, d_w = disp.shape[:2]
+
+        # Opt 5: Refresh zone from DB only every _ZONE_CACHE_EVERY frames
+        _zone_cache_frame += 1
+        if _zone_cache_pts is None or _zone_cache_frame >= _ZONE_CACHE_EVERY:
+            _zone_cache_pts   = zone_manager.load_zone()
+            _zone_cache_frame = 0
+        zone_points = _zone_cache_pts
 
         if zone_points is None:
             fr_last_results = []
+            fr_detect_boxes = []
         else:
-            # Submit a new detection task as soon as the previous one finishes
-            if fr_future is None or fr_future.done():
-                if fr_future is not None:
-                    try:
-                        res = fr_future.result()
-                        if res is not None:
-                            fr_last_results = res
-                    except Exception as e:
-                        print(f"[fr_async_task] Error: {e}")
+            # Opt 2: Run SCRFD detection only every _FR_DETECT_EVERY raw frames
+            _fr_detect_count += 1
+            if _fr_detect_count >= _FR_DETECT_EVERY:
+                _fr_detect_count = 0
+                raw_boxes       = _fr_detect_zone_roi(frame, list(zone_points), fw, fh)
+                fr_detect_boxes = _fr_display_tracker.update(raw_boxes)
 
+            # Stage 2: Async ArcFace — collect done result; submit every Nth detection frame
+            if fr_future is not None and fr_future.done():
+                try:
+                    res = fr_future.result()
+                    if res is not None:
+                        fr_last_results = res
+                except Exception as e:
+                    print(f"[fr_recog_task] Error: {e}")
+                fr_future = None
+
+            _fr_recog_count += 1
+            if (fr_detect_boxes and fr_future is None
+                    and _fr_recog_count >= _FR_RECOG_EVERY):
+                _fr_recog_count = 0
                 fr_future = fr_executor.submit(
-                    _fr_async_task, frame.copy(), fw, fh, list(zone_points)
+                    _fr_recog_task,
+                    frame.copy(), list(fr_detect_boxes), fw, fh, list(zone_points)
                 )
 
-        # Draw polygon zone
-        _draw_polygon_zone(frame, zone_points, fw, fh)
+        # Opt 4 (label remap): pin stale recognition labels to current tracked boxes
+        display_results = _remap_recog_to_boxes(fr_last_results, fr_detect_boxes)
 
-        # Draw latest recognition results
-        for res in fr_last_results:
-            ox, oy, ow, oh = res["box"]
+        # Draw zone overlay on display frame
+        _draw_polygon_zone(disp, zone_points, d_w, d_h)
+
+        # Draw Stage-1 detection boxes (thin blue = "detecting…") on display frame.
+        for det in fr_detect_boxes:
+            det_box = (det[0], det[1], det[2], det[3])
+            covered = any(
+                _box_iou(det_box, (r["box"][0], r["box"][1], r["box"][2], r["box"][3])) > 0.30
+                for r in display_results
+            )
+            if not covered:
+                bx = int(det[0] * ds); by = int(det[1] * ds)
+                bw = max(1, int(det[2] * ds)); bh = max(1, int(det[3] * ds))
+                cv2.rectangle(disp, (bx, by), (bx + bw, by + bh), (120, 120, 220), 1)
+
+        # Draw Stage-2 recognition results (colored + labeled) on display frame
+        for res in display_results:
+            ox = int(res["box"][0] * ds); oy = int(res["box"][1] * ds)
+            ow = max(1, int(res["box"][2] * ds)); oh = max(1, int(res["box"][3] * ds))
             smooth_name = res["name"]
             smooth_type = res["type"]
 
@@ -624,22 +938,24 @@ def generate_fr_frames():
             elif smooth_type == "known":
                 color = (0, 255, 0)
             else:
-                color = (0, 165, 255)  # Orange for Unknown
+                color = (0, 165, 255)
 
-            cv2.rectangle(frame, (ox, oy), (ox + ow, oy + oh), color, 2)
-            
-            # Format the label with similarity score
+            cv2.rectangle(disp, (ox, oy), (ox + ow, oy + oh), color, 2)
+
             if smooth_name != "Unknown":
-                label = f"⚠ {smooth_name} ({res['conf']:.2f})" if smooth_type == "blacklist" else f"{smooth_name} ({res['conf']:.2f})"
+                label = (f"! {smooth_name} ({res['conf']:.2f})"
+                         if smooth_type == "blacklist"
+                         else f"{smooth_name} ({res['conf']:.2f})")
             else:
                 label = "Unknown"
 
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
-            cv2.rectangle(frame, (ox, oy - th - 10), (ox + tw + 8, oy), color, -1)
-            cv2.putText(frame, label, (ox + 4, oy - 6),
+            cv2.rectangle(disp, (ox, oy - th - 10), (ox + tw + 8, oy), color, -1)
+            cv2.putText(disp, label, (ox + 4, oy - 6),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 2)
 
-        _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        # Opt 7: JPEG 72 for stream — smaller frames, faster browser decode
+        _, buf = cv2.imencode(".jpg", disp, [cv2.IMWRITE_JPEG_QUALITY, 72])
         yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
 
 
@@ -651,7 +967,8 @@ def fr_video_feed():
 
 @app.route("/start_fr_camera", methods=["POST"])
 def start_fr_camera():
-    global is_fr_streaming
+    global is_fr_streaming, _fr_detect_count, _fr_recog_count, _fr_recog_cache
+    global _zone_cache_pts, _zone_cache_frame
 
     stop_all_models()
 
@@ -665,14 +982,22 @@ def start_fr_camera():
     if not _open_shared_camera():
         return jsonify({"success": False, "message": "Cannot open camera."}), 500
 
-    is_fr_streaming = True
+    _fr_detect_count = 0
+    _fr_recog_count  = 0
+    _fr_recog_cache  = []
+    _zone_cache_pts  = None   # force fresh zone load on first frame
+    _zone_cache_frame = 0
+    _fr_display_tracker.reset()
+    is_fr_streaming  = True
     return jsonify({"success": True})
 
 
 @app.route("/stop_fr_camera", methods=["POST"])
 def stop_fr_camera():
-    global is_fr_streaming
+    global is_fr_streaming, _fr_recog_cache
     is_fr_streaming = False
+    _fr_recog_cache = []
+    _fr_display_tracker.reset()
     if not is_object_streaming and not is_restricted_streaming:
         _close_shared_camera()
     return jsonify({"success": True})
