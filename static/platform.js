@@ -4,7 +4,7 @@
 
 document.addEventListener('DOMContentLoaded', () => {
 
-  /* ── Active sidebar highlight ────────────────────────────── */
+  /* ── Active top-nav highlight ───────────────────────────── */
   const path = window.location.pathname.replace(/\/+$/, '') || '/';
 
   const map = {
@@ -13,20 +13,23 @@ document.addEventListener('DOMContentLoaded', () => {
     '/face-recognition':  'demo',
     '/object-detection':  'demo',
     '/restricted-area':   'demo',
+    '/vehicle-detection': 'demo',
     '/report':            'report',
+    '/fr-report':         'report',
+    '/ra-report':         'report',
     '/details':           'details',
     '/license':           'license',
   };
 
   const activeKey = map[path];
   if (activeKey) {
-    document.querySelectorAll('.sb-item').forEach(el => {
+    document.querySelectorAll('.nav-item').forEach(el => {
       if (el.dataset.page === activeKey) el.classList.add('active');
       else el.classList.remove('active');
     });
   }
 
-  /* ── Intersection Observer — animate cards on scroll ──────── */
+  /* ── Intersection Observer — animate cards on scroll ────── */
   const observer = new IntersectionObserver(
     (entries) => {
       entries.forEach(e => {
@@ -40,14 +43,14 @@ document.addEventListener('DOMContentLoaded', () => {
     { threshold: 0.1 }
   );
 
-  document.querySelectorAll('.feat-card, .service-card, .stat-card, .info-card').forEach(el => {
+  document.querySelectorAll('.feat-card, .service-card, .stat-card, .info-card, .module-card').forEach(el => {
     el.style.opacity = '0';
-    el.style.transform = 'translateY(20px)';
-    el.style.transition = 'opacity .45s ease, transform .45s ease';
+    el.style.transform = 'translateY(18px)';
+    el.style.transition = 'opacity .4s ease, transform .4s ease';
     observer.observe(el);
   });
 
-  /* ── Report page: load alerts on page load ─────────────────── */
+  /* ── Report page: load alerts ───────────────────────────── */
   if (path === '/report') {
     loadAlerts();
     loadAlertStats();
@@ -62,7 +65,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function loadAlerts() {
-    const tbody = document.getElementById('report-alerts-body');
+    const tbody   = document.getElementById('report-alerts-body');
     const countEl = document.getElementById('report-alerts-count');
     if (!tbody) return;
 
@@ -92,12 +95,11 @@ document.addEventListener('DOMContentLoaded', () => {
             </td>
             <td>
               ${a.image_path
-                ? `<a href="/${escHtml(a.image_path)}" target="_blank" style="color:var(--p-accent);font-weight:600;font-size:.8rem;">View Snapshot</a>`
+                ? `<a href="/${escHtml(a.image_path)}" target="_blank" style="color:var(--p-red);font-weight:600;font-size:.8rem;">View Snapshot</a>`
                 : '<span style="color:var(--p-text3);">—</span>'}
             </td>
           </tr>`).join('');
 
-        /* update stat card */
         const alertStatEl = document.getElementById('stat-alerts-val');
         if (alertStatEl) alertStatEl.textContent = alerts.length;
       })
@@ -107,7 +109,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function loadAlertStats() {
-    /* derive stats from alerts */
     fetch('/get_alerts')
       .then(r => r.json())
       .then(alerts => {
@@ -115,7 +116,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const todayCount = alerts.filter(a => {
           try { return new Date(a.timestamp).toDateString() === today; } catch { return false; }
         }).length;
-
         const todayEl = document.getElementById('stat-today-val');
         if (todayEl) todayEl.textContent = todayCount;
       })

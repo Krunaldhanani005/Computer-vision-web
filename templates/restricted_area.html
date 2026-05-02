@@ -2,95 +2,9 @@
 {% block title %}Restricted Area Monitor — CV Platform{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="/static/style.css" />
 <style>
-  body.platform-body main { max-width:none !important; margin:0 !important; }
-
-  /* ── Layout (mirrors FR layout) ── */
-  .ra-workspace { display:flex; flex-direction:column; gap:24px; }
-  .ra-main-row  {
-    display: grid;
-    grid-template-columns: 360px 1fr;
-    gap: 24px;
-    align-items: start;
-  }
-  @media(max-width:900px){ .ra-main-row{ grid-template-columns:1fr; } }
-
-  /* ── Video ── */
-  .ra-video-wrap {
-    position: relative;
-    aspect-ratio: 16/9;
-    min-height: 340px;
-    background: #0a0a0f;
-    border-radius: 12px;
-    overflow: hidden;
-  }
-  .ra-video-wrap img { width:100%; height:100%; object-fit:cover; display:none; }
-  .ra-video-placeholder {
-    position:absolute; inset:0; display:flex; flex-direction:column;
-    align-items:center; justify-content:center; color:#444;
-  }
-  .ra-video-placeholder .icon { font-size:3rem; margin-bottom:10px; }
-
-  /* ── Zone canvas overlay ── */
-  #ra-zone-canvas {
-    position:absolute; top:0; left:0; width:100%; height:100%;
-    z-index:10; cursor:crosshair; display:none;
-  }
-
-  /* ── Zone drawing controls ── */
-  .zone-btn-row {
-    display:none; gap:10px; margin-top:10px;
-  }
-  .zone-instructions {
-    background: rgba(249,115,22,.06);
-    border: 1px solid rgba(249,115,22,.2);
-    border-radius:8px;
-    padding:10px 14px;
-    font-size:.8rem;
-    color:#f97316;
-    margin-top:8px;
-    line-height:1.6;
-    display:none;
-  }
-
-  /* ── Source / start row ── */
-  .source-row {
-    background:rgba(0,0,0,.2); padding:10px; border-radius:8px; margin-top:12px;
-  }
-  .source-select {
-    width:100%; padding:8px; background:rgba(255,255,255,.05);
-    border:1px solid rgba(255,255,255,.2); color:white; border-radius:4px;
-    outline:none; margin-bottom:8px;
-  }
-  .btn-row { display:flex; gap:10px; }
-
-  /* ── Status banner ── */
-  .live-status-banner {
-    display:flex; align-items:center; justify-content:space-between;
-    flex-wrap:wrap; gap:12px;
-    background:rgba(249,115,22,.06);
-    border:1px solid rgba(249,115,22,.18);
-    border-radius:10px; padding:12px 18px;
-  }
-  .live-status-banner .lsb-left { display:flex; align-items:center; gap:10px; }
-  .live-dot { width:9px; height:9px; border-radius:50%; background:#f97316;
-    box-shadow:0 0 6px #f97316; animation:pulse-dot 2s infinite; }
-  @keyframes pulse-dot { 0%,100%{opacity:1;} 50%{opacity:.4;} }
-  .live-status-banner .lsb-label { font-size:.82rem; color:#aaa; }
-  .lsb-link {
-    display:inline-flex; align-items:center; gap:6px;
-    padding:7px 16px; border-radius:8px;
-    background:rgba(249,115,22,.12); border:1px solid rgba(249,115,22,.35);
-    color:#fb923c; font-size:.8rem; font-weight:700;
-    text-decoration:none; transition:.18s;
-  }
-  .lsb-link:hover { background:rgba(249,115,22,.22); color:#fff; }
-
-  /* ── Thumbnail previews for registration ── */
-  .ra-thumb-row { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
-  .ra-thumb { width:52px; height:52px; object-fit:cover; border-radius:6px;
-    border:1px solid rgba(255,255,255,.1); }
+  .ent-select-input option { color: #111827; }
+  .ent-select option { color: #111827; }
 </style>
 {% endblock %}
 
@@ -108,8 +22,8 @@
   <!-- Header -->
   <div class="page-hd">
     <div class="page-hd-inner">
-      <div class="page-hd-icon" style="background:rgba(249,115,22,.12);border-color:rgba(249,115,22,.25);">
-        <svg viewBox="0 0 24 24" style="stroke:#f97316;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      <div class="page-hd-icon page-hd-icon--restricted">
+        <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
       </div>
       <div class="page-hd-info">
         <h1 class="page-title">Restricted Area Monitor</h1>
@@ -122,143 +36,126 @@
           <span class="p-tag p-tag--tech">ArcFace</span>
           <span class="p-tag p-tag--tech">MongoDB</span>
           <span class="p-tag p-tag--tech">Polygon Zone</span>
-          <span class="p-tag p-tag--live" style="background:rgba(249,115,22,.15);color:#f97316;border-color:rgba(249,115,22,.3);">&#9679; Live</span>
+          <span class="p-tag p-tag--red">&#9679; Security</span>
         </div>
       </div>
     </div>
   </div>
 
-  <div class="ra-workspace">
+  <div class="ent-workspace">
 
-    <!-- ── Status Banner ─────────────────────────────────────────────────── -->
-    <div class="live-status-banner">
-      <div class="lsb-left">
-        <div class="live-dot"></div>
-        <span class="lsb-label" id="ra-monitor-status">
+    <!-- Status bar -->
+    <div class="ent-status-bar">
+      <div class="esb-left">
+        <div class="ent-live-dot red" id="ra-live-dot"></div>
+        <span class="ent-status-label" id="ra-monitor-status">
           Security offline. Start monitoring to activate intrusion detection.
         </span>
       </div>
-      <a href="/ra-report" class="lsb-link">
+      <a href="/ra-report" class="ent-dashboard-link">
         &#9685; Open RA Dashboard &rarr;
       </a>
     </div>
 
-    <!-- ── Main Card ─────────────────────────────────────────────────────── -->
-    <section class="card" style="margin:0;">
-      <div class="card-header">
-        <div class="status-indicator" id="ra-status-indicator" style="background:rgba(249,115,22,.15);color:#f97316;border-color:rgba(249,115,22,.3);">OFFLINE</div>
-        <h2>Restricted Area Engine</h2>
+    <!-- Main panel -->
+    <div class="ent-panel">
+      <div class="ent-panel-hd">
+        <span class="ent-panel-title">Restricted Area Engine</span>
+        <span class="ent-indicator ent-indicator--offline" id="ra-status-indicator">OFFLINE</span>
       </div>
-      <div class="card-body">
-        <div class="ra-main-row">
 
-          <!-- LEFT: Registration form -->
-          <div class="form-side">
-            <h3 style="margin-bottom:12px;color:#f97316;">Register Authorised Person</h3>
-            <p style="color:#aaa;font-size:.88rem;margin-bottom:14px;line-height:1.5;">
-              Registered persons are allowed in the zone. Unknown faces trigger alerts.
+      <div class="ent-panel-body">
+
+        <!-- LEFT: Register form -->
+        <div class="ent-left-panel">
+          <div>
+            <div class="ent-section-label">Register Authorised Person</div>
+            <p style="font-size:.81rem;color:var(--p-text2);line-height:1.55;margin-bottom:16px;">
+              Registered persons are <strong>allowed</strong> in the zone. Unknown faces trigger security alerts.
             </p>
-
-            <div class="form-group">
-              <label for="ra-name">Full Name</label>
-              <input type="text" id="ra-name" placeholder="E.g., Alice Johnson" autocomplete="off"/>
-            </div>
-
-            <div class="form-group" style="margin-top:12px;">
-              <label>Photos (3+ recommended)</label>
-              <div class="upload-zone" id="ra-upload-zone"
-                   onclick="document.getElementById('ra-file-input').click()"
-                   style="min-height:80px;">
-                <div class="icon" style="font-size:1.6rem;">&#x229E;</div>
-                <p style="font-size:.85rem;">Click to select images</p>
-                <input type="file" id="ra-file-input" accept="image/*" multiple hidden
-                       onchange="raHandleFiles(this.files)"/>
-                <div class="ra-thumb-row" id="ra-thumbs"></div>
-              </div>
-            </div>
-
-            <button class="btn" id="ra-register-btn" onclick="raRegister()"
-                    style="width:100%;margin-top:14px;background:rgba(249,115,22,.85);color:#fff;border:none;">
-              Register Person
-            </button>
-            <div class="status-box" id="ra-reg-status" style="margin-top:12px;">Ready</div>
-
-            <!-- Zone instructions -->
-            <div class="zone-instructions" id="zone-instructions">
-              <strong>&#9670; Polygon Zone Mode</strong><br>
-              Click on the video to add points.<br>
-              Each click adds a vertex.<br>
-              Need &ge; 3 points to save.<br>
-              Click <em>Save Zone</em> to lock it.
-            </div>
           </div>
 
-          <!-- RIGHT: Video + zone controls -->
-          <div class="view-side">
-            <div class="ra-video-wrap" id="ra-video-wrap">
-              <div class="ra-video-placeholder" id="ra-video-placeholder">
-                <div class="icon">&#128274;</div>
-                <p>Restricted Area Monitor Offline</p>
-              </div>
-              <img id="ra-feed" src="" alt="RA feed"/>
-              <canvas id="ra-zone-canvas"></canvas>
-            </div>
-
-            <!-- Zone controls -->
-            <div class="zone-btn-row" id="ra-zone-controls">
-              <button class="btn btn--success" style="flex:1;" onclick="raSaveZone()">
-                &#x2713; Save Zone
-              </button>
-              <button class="btn" style="flex:1;background:rgba(239,68,68,.15);border:1px solid #ef4444;color:#ef4444;"
-                      onclick="raDeleteZone()">
-                &#x2715; Delete Zone
-              </button>
-              <button class="btn" style="flex:1;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.2);color:#aaa;"
-                      onclick="raUndoPoint()">
-                &#x21A9; Undo
-              </button>
-            </div>
-
-            <!-- Source + start/stop -->
-            <div class="source-row">
-              <select id="ra-source-type" class="source-select" onchange="raToggleCCTV()">
-                <option value="webcam" style="color:black;">Webcam</option>
-                <option value="cctv"   style="color:black;">CCTV (Auto)</option>
-              </select>
-              <div id="ra-cctv-row" style="display:none;margin-bottom:8px;">
-                <div style="padding:9px 12px;background:rgba(249,115,22,.06);border:1px solid rgba(249,115,22,.18);border-radius:6px;font-size:.78rem;color:#fb923c;">
-                  &#9679; Auto-connecting using stored credentials
-                </div>
-              </div>
-              <div class="btn-row">
-                <button class="btn" id="ra-start-btn" onclick="raStart()"
-                        style="flex:1;background:#f97316;color:#fff;border:none;">
-                  &#x25B6; Start Monitoring
-                </button>
-                <button class="btn btn--danger" id="ra-stop-btn" onclick="raStop()"
-                        style="display:none;flex:1;">
-                  &#x25FC; Stop Monitoring
-                </button>
-              </div>
-            </div>
+          <div class="ent-form-group">
+            <label class="ent-label" for="ra-name">Full Name</label>
+            <input class="ent-input" type="text" id="ra-name" placeholder="e.g. Alice Johnson" autocomplete="off"/>
           </div>
 
+          <div class="ent-form-group ent-form-group--grow">
+            <label class="ent-label">Photos (3+ recommended)</label>
+            <div class="ent-upload-zone" id="ra-upload-zone" onclick="document.getElementById('ra-file-input').click()">
+              <div class="uz-icon">&#x229E;</div>
+              <div class="uz-text">Click or drag images here</div>
+              <div class="uz-sub">3+ clear front-facing photos</div>
+              <input type="file" id="ra-file-input" accept="image/*" multiple hidden onchange="raHandleFiles(this.files)"/>
+            </div>
+            <div class="ent-thumb-row" id="ra-thumbs"></div>
+          </div>
+
+          <button class="ent-btn ent-btn--register" id="ra-register-btn" onclick="raRegister()">
+            Register Person
+          </button>
+
+          <div class="ent-status-box" id="ra-reg-status">Ready</div>
+
+          <!-- Zone hint -->
+          <div class="ent-zone-hint ent-zone-hint--draw" id="zone-instructions" style="display:none;">
+            <strong>&#9670; Polygon Zone Mode</strong><br>
+            Click on the video to add points. Need &ge;3 points to save. Click <em>Save Zone</em> to lock it.
+          </div>
         </div>
-      </div>
-    </section>
 
-  </div><!-- /ra-workspace -->
+        <!-- RIGHT: Video + controls -->
+        <div class="ent-right-panel">
+
+          <!-- Video -->
+          <div class="ent-video-wrap" id="ra-video-wrap" style="flex:none;">
+            <div class="ent-video-placeholder" id="ra-video-placeholder">
+              <div class="vp-icon">&#128274;</div>
+              <div class="vp-text">Restricted Area Monitor Offline</div>
+            </div>
+            <img id="ra-feed" src="" alt="RA feed"/>
+            <canvas class="ent-video-overlay-canvas" id="ra-zone-canvas"></canvas>
+          </div>
+
+          <!-- Zone toolbar -->
+          <div class="ent-zone-toolbar" id="ra-zone-controls" style="display:none;">
+            <button class="ent-zone-btn ent-zone-btn--save" onclick="raSaveZone()">&#x2713; Save Zone</button>
+            <button class="ent-zone-btn ent-zone-btn--delete" onclick="raDeleteZone()">&#x2715; Delete Zone</button>
+            <button class="ent-zone-btn ent-zone-btn--undo" onclick="raUndoPoint()">&#x21A9; Undo</button>
+          </div>
+
+          <!-- Camera source + start/stop -->
+          <div class="ent-source-row">
+            <div class="ent-source-label">Camera Source</div>
+            <select id="ra-source-type" class="ent-select" onchange="raToggleCCTV()">
+              <option value="webcam">Webcam</option>
+              <option value="cctv">CCTV (Auto)</option>
+            </select>
+            <div id="ra-cctv-row" class="ent-cctv-notice">
+              &#9679; Auto-connecting using stored CCTV credentials
+            </div>
+            <div class="ent-btn-row">
+              <button class="ent-btn ent-btn--start" id="ra-start-btn" onclick="raStart()">&#x25B6; Start Monitoring</button>
+              <button class="ent-btn ent-btn--stop" id="ra-stop-btn" onclick="raStop()" style="display:none;">&#x25FC; Stop</button>
+            </div>
+          </div>
+
+        </div><!-- /ent-right-panel -->
+      </div><!-- /ent-panel-body -->
+    </div><!-- /ent-panel -->
+
+  </div><!-- /ent-workspace -->
 </div><!-- /page-wrap -->
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
 // ══════════════════════════════════════════════════════════════════════════════
-//  POLYGON ZONE DRAWING ENGINE  (RA — saves to /ra/save_zone)
+//  POLYGON ZONE DRAWING ENGINE  (RA)
 // ══════════════════════════════════════════════════════════════════════════════
 (function() {
-  let points  = [];
-  let locked  = false;
+  let points = [];
+  let locked = false;
   let canvas, ctx;
 
   function initCanvas() {
@@ -278,8 +175,10 @@
     canvas.onclick = (e) => {
       if (locked) return;
       const rect = canvas.getBoundingClientRect();
-      points.push({ x: (e.clientX - rect.left) / rect.width,
-                    y: (e.clientY - rect.top)  / rect.height });
+      points.push({
+        x: (e.clientX - rect.left) / rect.width,
+        y: (e.clientY - rect.top)  / rect.height
+      });
       redraw();
       updateHint();
     };
@@ -296,8 +195,8 @@
     ctx.moveTo(px[0].x, px[0].y);
     px.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
     ctx.closePath();
-    ctx.fillStyle   = locked ? 'rgba(249,115,22,0.12)' : 'rgba(249,115,22,0.09)';
-    ctx.strokeStyle = locked ? '#f97316' : 'rgba(249,115,22,0.7)';
+    ctx.fillStyle   = locked ? 'rgba(220,38,38,0.12)' : 'rgba(220,38,38,0.08)';
+    ctx.strokeStyle = '#dc2626';
     ctx.lineWidth   = 2;
     ctx.setLineDash(locked ? [] : [6, 4]);
     ctx.fill();
@@ -307,39 +206,33 @@
     px.forEach((p, i) => {
       ctx.beginPath();
       ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
-      ctx.fillStyle   = i === 0 ? '#f97316' : '#fff';
-      ctx.strokeStyle = '#f97316';
+      ctx.fillStyle   = i === 0 ? '#dc2626' : '#fff';
+      ctx.strokeStyle = '#dc2626';
       ctx.lineWidth   = 1.5;
       ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#f97316';
-      ctx.font = 'bold 11px sans-serif';
+      ctx.fillStyle = '#111';
+      ctx.font = 'bold 11px Inter, sans-serif';
       ctx.fillText(i + 1, p.x + 7, p.y - 4);
     });
 
-    ctx.fillStyle = 'rgba(255,255,255,0.8)';
-    ctx.font = '12px sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.font = '12px Inter, sans-serif';
     ctx.fillText(`${points.length} point${points.length !== 1 ? 's' : ''} · Need ≥3 to save`, 10, 20);
   }
 
   function updateHint() {
     const instr = document.getElementById('zone-instructions');
     if (!instr) return;
+    instr.style.display = 'block';
     if (locked) {
-      instr.style.display = 'block';
-      instr.style.color = '#22c55e';
-      instr.style.background = 'rgba(34,197,94,.06)';
-      instr.style.borderColor = 'rgba(34,197,94,.25)';
+      instr.className = 'ent-zone-hint ent-zone-hint--saved';
       instr.innerHTML = `<strong>&#10003; Zone active</strong> &mdash; ${points.length} points. Click <em>Delete Zone</em> to reset.`;
     } else {
-      instr.style.display = points.length > 0 ? 'block' : 'none';
-      instr.style.color = '#f97316';
-      instr.style.background = 'rgba(249,115,22,.06)';
-      instr.style.borderColor = 'rgba(249,115,22,.2)';
-      instr.innerHTML = `<strong>&#9670; Drawing</strong> &mdash; ${points.length} point${points.length!==1?'s':''}, need ${Math.max(0, 3-points.length)} more to save.`;
+      instr.className = 'ent-zone-hint ent-zone-hint--draw';
+      instr.innerHTML = `<strong>&#9670; Drawing</strong> &mdash; ${points.length} point${points.length!==1?'s':''}, need ${Math.max(0,3-points.length)} more to save.`;
     }
   }
 
-  // ── Start drawing (called on camera start) ─────────────────────────────────
   window.raStartDrawing = function() {
     points = [];
     locked = false;
@@ -347,10 +240,9 @@
     const controls = document.getElementById('ra-zone-controls');
     if (controls) controls.style.display = 'flex';
     const instr = document.getElementById('zone-instructions');
-    if (instr) { instr.style.display = 'block'; }
+    if (instr) { instr.style.display = 'block'; updateHint(); }
   };
 
-  // ── Load existing zone from server ─────────────────────────────────────────
   window.raLoadExistingZone = async function() {
     try {
       const r = await fetch('/ra/get_zone');
@@ -368,56 +260,48 @@
   };
 
   window.raSaveZone = async function() {
-    if (points.length < 3) {
-      alert('Draw at least 3 points to form a polygon zone.');
-      return;
-    }
+    if (points.length < 3) { alert('Draw at least 3 points to form a polygon zone.'); return; }
     try {
       const r = await fetch('/ra/save_zone', {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ zone: points })
+        body:    JSON.stringify({ zone: points })
       });
       const j = await r.json();
       if (j.success) {
         locked = true;
         if (canvas) canvas.onclick = null;
-        redraw();
-        updateHint();
+        redraw(); updateHint();
         const gs = document.getElementById('ra-reg-status');
-        if (gs) { gs.textContent = `Zone saved (${points.length} pts). Detection active.`; gs.className = 'status-box success'; }
-      } else {
-        alert('Failed to save zone. ' + (j.error || ''));
-      }
+        if (gs) { gs.textContent = `Zone saved (${points.length} pts). Detection active.`; gs.className = 'ent-status-box success'; }
+      } else { alert('Failed to save zone. ' + (j.error || '')); }
     } catch(e) { alert('Error saving zone.'); }
   };
 
   window.raDeleteZone = async function() {
     try {
       await fetch('/ra/save_zone', {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ zone: null })
+        body:    JSON.stringify({ zone: null })
       });
       points = [];
       locked = false;
       if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
       initCanvas();
       const instr = document.getElementById('zone-instructions');
-      if (instr) { instr.style.display = 'none'; }
+      if (instr) instr.style.display = 'none';
       const gs = document.getElementById('ra-reg-status');
-      if (gs) { gs.textContent = 'Zone deleted. Click video to draw new zone.'; gs.className = 'status-box info'; }
+      if (gs) { gs.textContent = 'Zone deleted. Click video to draw new zone.'; gs.className = 'ent-status-box info'; }
     } catch(e) { alert('Error deleting zone.'); }
   };
 
   window.raUndoPoint = function() {
     if (locked || points.length === 0) return;
     points.pop();
-    redraw();
-    updateHint();
+    redraw(); updateHint();
   };
 
-  // Load existing zone on page load
   raLoadExistingZone();
 })();
 
@@ -433,9 +317,9 @@ async function raStart() {
   const src = document.getElementById('ra-source-type').value;
   try {
     const r = await fetch('/start_restricted_camera', {
-      method: 'POST',
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source: src })
+      body:    JSON.stringify({ source: src })
     });
     const j = await r.json();
     if (j.success) {
@@ -445,13 +329,11 @@ async function raStart() {
       document.getElementById('ra-video-placeholder').style.display = 'none';
       document.getElementById('ra-start-btn').style.display = 'none';
       document.getElementById('ra-stop-btn').style.display = '';
-      document.getElementById('ra-status-indicator').textContent = 'MONITORING';
-      document.getElementById('ra-status-indicator').style.color = '#22c55e';
-      document.getElementById('ra-status-indicator').style.background = 'rgba(34,197,94,.12)';
-      document.getElementById('ra-status-indicator').style.borderColor = 'rgba(34,197,94,.3)';
+      const ind = document.getElementById('ra-status-indicator');
+      ind.textContent = 'MONITORING';
+      ind.className = 'ent-indicator ent-indicator--live';
       document.getElementById('ra-monitor-status').textContent =
         'Security monitoring active. Intrusions are logged to RA Dashboard.';
-      // Activate zone drawing canvas
       raStartDrawing();
     } else {
       alert('Cannot start camera: ' + (j.message || 'Unknown error'));
@@ -469,10 +351,9 @@ async function raStop() {
     document.getElementById('ra-start-btn').style.display = '';
     document.getElementById('ra-stop-btn').style.display = 'none';
     document.getElementById('ra-zone-controls').style.display = 'none';
-    document.getElementById('ra-status-indicator').textContent = 'OFFLINE';
-    document.getElementById('ra-status-indicator').style.color = '#f97316';
-    document.getElementById('ra-status-indicator').style.background = 'rgba(249,115,22,.12)';
-    document.getElementById('ra-status-indicator').style.borderColor = 'rgba(249,115,22,.25)';
+    const ind = document.getElementById('ra-status-indicator');
+    ind.textContent = 'OFFLINE';
+    ind.className = 'ent-indicator ent-indicator--offline';
     document.getElementById('ra-monitor-status').textContent =
       'Security offline. Start monitoring to activate intrusion detection.';
   } catch(e) {}
@@ -488,17 +369,17 @@ function raHandleFiles(files) {
   const row = document.getElementById('ra-thumbs');
   row.innerHTML = raFiles.map(f => {
     const url = URL.createObjectURL(f);
-    return `<img class="ra-thumb" src="${url}" alt="preview">`;
+    return `<img class="ent-thumb" src="${url}" alt="preview">`;
   }).join('');
 }
 
 async function raRegister() {
   const name = document.getElementById('ra-name').value.trim();
   const st   = document.getElementById('ra-reg-status');
-  if (!name) { st.textContent = 'Name is required.'; st.className = 'status-box error'; return; }
-  if (raFiles.length === 0) { st.textContent = 'Select at least 1 image.'; st.className = 'status-box error'; return; }
+  if (!name)            { st.textContent = 'Name is required.';         st.className = 'ent-status-box error'; return; }
+  if (raFiles.length === 0) { st.textContent = 'Select at least 1 image.'; st.className = 'ent-status-box error'; return; }
 
-  st.textContent = 'Registering…'; st.className = 'status-box info';
+  st.textContent = 'Registering…'; st.className = 'ent-status-box info';
   const btn = document.getElementById('ra-register-btn');
   btn.disabled = true;
 
@@ -510,7 +391,7 @@ async function raRegister() {
     const r = await fetch('/add_known_person', { method: 'POST', body: fd });
     const j = await r.json();
     st.textContent = j.message;
-    st.className = j.success ? 'status-box success' : 'status-box error';
+    st.className = j.success ? 'ent-status-box success' : 'ent-status-box error';
     if (j.success) {
       document.getElementById('ra-name').value = '';
       raFiles = [];
@@ -518,7 +399,7 @@ async function raRegister() {
       document.getElementById('ra-file-input').value = '';
     }
   } catch(e) {
-    st.textContent = 'Server error.'; st.className = 'status-box error';
+    st.textContent = 'Server error.'; st.className = 'ent-status-box error';
   }
   btn.disabled = false;
 }

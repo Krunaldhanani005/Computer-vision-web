@@ -70,10 +70,11 @@
             </p>
 
             <form id="uploadForm" class="upload-form" style="margin-top:20px;">
-              <div class="file-upload-wrapper" style="position:relative; overflow:hidden; background:rgba(255,255,255,.05); border:1px dashed rgba(255,255,255,.2); border-radius:8px; padding:20px; text-align:center; margin-bottom:15px;">
-                <input type="file" id="videoInput" name="video" accept="video/mp4,video/x-m4v,video/*" style="position:absolute; top:0; left:0; right:0; bottom:0; opacity:0; cursor:pointer;" />
-                <div style="font-size:.9rem; color:var(--p-text2);">Click or drag video file here</div>
-                <div style="font-size:.75rem; color:var(--p-text3); margin-top:5px;">Max size 20MB (.mp4, .avi, .mov)</div>
+              <div class="ent-upload-zone vd-upload-zone" id="vd-upload-zone" onclick="document.getElementById('videoInput').click()">
+                <div class="uz-icon">&#x229E;</div>
+                <div class="uz-text">Click or drag video file here</div>
+                <div class="uz-sub">Max size 20MB (.mp4, .avi, .mov)</div>
+                <input type="file" id="videoInput" name="video" accept="video/mp4,video/x-m4v,video/*" hidden />
               </div>
               
               <button type="submit" id="vehicle-upload-btn" class="btn btn--object" style="width:100%; opacity:0.5; cursor:not-allowed;" disabled>
@@ -106,4 +107,38 @@
 
 {% block extra_scripts %}
 <script src="/static/script.js?v=6"></script>
+<script>
+(function() {
+  const zone = document.getElementById('vd-upload-zone');
+  const input = document.getElementById('videoInput');
+  if (!zone || !input) return;
+
+  zone.addEventListener('dragover', function(e) {
+    e.preventDefault();
+    zone.classList.add('drag-over');
+  });
+  zone.addEventListener('dragleave', function(e) {
+    e.preventDefault();
+    zone.classList.remove('drag-over');
+  });
+  zone.addEventListener('drop', function(e) {
+    e.preventDefault();
+    zone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length) {
+      input.files = e.dataTransfer.files;
+      input.dispatchEvent(new Event('change'));
+    }
+  });
+
+  // Show selected filename
+  input.addEventListener('change', function() {
+    if (input.files.length) {
+      const textEl = zone.querySelector('.uz-text');
+      if (textEl) textEl.textContent = input.files[0].name;
+      const btn = document.getElementById('vehicle-upload-btn');
+      if (btn) { btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer'; }
+    }
+  });
+})();
+</script>
 {% endblock %}

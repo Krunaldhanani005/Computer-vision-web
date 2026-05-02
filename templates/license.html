@@ -4,154 +4,214 @@
 {% block content %}
 <div class="page-wrap p-page-enter">
 
+  <!-- Page header -->
   <div style="margin-bottom:36px;">
-    <div class="section-tag">Legal</div>
-    <h1 class="page-title" style="margin-top:10px;">License &amp; Access</h1>
-    <p style="font-size:.9rem;color:var(--p-text2);margin-top:6px;">
-      Software ownership, version information, and usage permissions.
+    <div class="section-tag">Model Licenses</div>
+    <h1 class="page-title" style="margin-top:10px;">AI Module Licenses</h1>
+    <p style="font-size:.9rem;color:var(--p-text2);margin-top:6px;max-width:600px;">
+      License and deployment status for all AI models integrated in this platform.
     </p>
   </div>
 
-  <div class="license-wrap">
+  <!-- ── ACTIVE MODULES ───────────────────────────────────────── -->
+  <div class="lic-section-label">Active Modules</div>
 
-    <!-- ── Software License Card ── -->
-    <div class="license-card">
-      <div class="license-card-hd">
-        <div class="license-icon">
-          <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        </div>
-        <div>
-          <div class="license-card-title">Software License</div>
-          <div class="license-card-sub">Computer Vision AI Platform — Proprietary Internal Use</div>
-        </div>
+  <div class="license-model-list">
+
+    <!-- Face Recognition -->
+    <div class="lic-card">
+      <div class="lic-card-right">
+        <span class="lic-status lic-status--active"><span class="lic-status-dot"></span>Active</span>
       </div>
-      <div class="license-body">
-        <div class="license-row">
-          <span class="license-row-k">Product</span>
-          <span class="license-row-v">Computer Vision AI Platform</span>
-        </div>
-        <div class="license-row">
-          <span class="license-row-k">Version</span>
-          <span class="license-row-v" style="font-family:'Fira Code',monospace;font-size:.82rem;color:var(--p-accent);">v2.0.0</span>
-        </div>
-        <div class="license-row">
-          <span class="license-row-k">Owner</span>
-          <span class="license-row-v">NantaTech</span>
-        </div>
-        <div class="license-row">
-          <span class="license-row-k">Contact</span>
-          <span class="license-row-v" style="font-size:.82rem;">vraj@nantatech.com</span>
-        </div>
-        <div class="license-row">
-          <span class="license-row-k">License Type</span>
-          <span class="license-row-v">Internal / Research Use Only</span>
-        </div>
-        <div class="license-row">
-          <span class="license-row-k">Build Date</span>
-          <span class="license-row-v">2025</span>
-        </div>
-        <div class="license-row">
-          <span class="license-row-k">Environment</span>
-          <span class="license-row-v">Local deployment · Python 3 · Flask</span>
+      <div class="lic-card-icon" style="background:#D72638;">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M3 21v-1a9 9 0 0118 0v1"/>
+          <line x1="8" y1="5" x2="3" y2="5"/><line x1="3" y1="5" x2="3" y2="9"/>
+          <line x1="16" y1="5" x2="21" y2="5"/><line x1="21" y1="5" x2="21" y2="9"/></svg>
+      </div>
+      <div class="lic-card-body">
+        <div class="lic-card-name">Face Recognition</div>
+        <div class="lic-card-desc">Real-time face detection and 128-d encoding identity matching. Classifies known, blacklisted, and unknown persons per frame with polygon zone support.</div>
+        <div class="lic-card-meta">
+          <span class="lic-meta-chip">dlib / face_recognition</span>
+          <span class="lic-meta-chip">YOLOv8n-face</span>
+          <span class="lic-meta-chip">v2.0</span>
+          <span class="lic-meta-chip">Identity · DNN</span>
         </div>
       </div>
     </div>
 
-    <!-- ── Usage Permissions ── -->
-    <div class="license-card">
-      <div class="license-card-hd">
-        <div class="license-icon" style="background:linear-gradient(135deg,#10b981,#059669);">
-          <svg viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-        </div>
-        <div>
-          <div class="license-card-title">Usage Permissions</div>
-          <div class="license-card-sub">What is and is not permitted under this license</div>
-        </div>
+    <!-- Restricted Area Monitoring -->
+    <div class="lic-card">
+      <div class="lic-card-right">
+        <span class="lic-status lic-status--active"><span class="lic-status-dot"></span>Active</span>
       </div>
-      <div class="license-body">
-        <div class="perms-grid">
-          <div class="perm-item perm-item--allow">
-            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
-            Internal research &amp; development
-          </div>
-          <div class="perm-item perm-item--allow">
-            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
-            Demonstration &amp; testing
-          </div>
-          <div class="perm-item perm-item--allow">
-            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
-            Local network deployment
-          </div>
-          <div class="perm-item perm-item--allow">
-            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
-            Model customisation &amp; training
-          </div>
-          <div class="perm-item perm-item--deny">
-            <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            Public distribution
-          </div>
-          <div class="perm-item perm-item--deny">
-            <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            Commercial resale
-          </div>
-          <div class="perm-item perm-item--deny">
-            <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            Unauthorised cloud hosting
-          </div>
-          <div class="perm-item perm-item--deny">
-            <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            Sublicensing to third parties
-          </div>
+      <div class="lic-card-icon" style="background:#7f1d1d;">
+        <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          <line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      </div>
+      <div class="lic-card-body">
+        <div class="lic-card-name">Restricted Area Monitoring</div>
+        <div class="lic-card-desc">Polygon-zone intrusion detection using ArcFace recognition. Unknown faces trigger timestamped alerts stored in MongoDB with full audit trail.</div>
+        <div class="lic-card-meta">
+          <span class="lic-meta-chip">YuNet Detection</span>
+          <span class="lic-meta-chip">ArcFace</span>
+          <span class="lic-meta-chip">v2.0</span>
+          <span class="lic-meta-chip">Security · Zone</span>
         </div>
       </div>
     </div>
 
-    <!-- ── Access Levels ── -->
-    <div class="license-card">
-      <div class="license-card-hd">
-        <div class="license-icon" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);">
-          <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
-        </div>
-        <div>
-          <div class="license-card-title">Internal Access Levels</div>
-          <div class="license-card-sub">Role-based access for the platform</div>
-        </div>
+    <!-- Object Detection -->
+    <div class="lic-card">
+      <div class="lic-card-right">
+        <span class="lic-status lic-status--active"><span class="lic-status-dot"></span>Active</span>
       </div>
-      <div class="license-body">
-        <div class="license-row">
-          <span class="license-row-k">Administrator</span>
-          <span class="license-row-v">Full access — training, config, alerts, all models</span>
-        </div>
-        <div class="license-row">
-          <span class="license-row-k">Operator</span>
-          <span class="license-row-v">Live monitoring, alert viewing, camera control</span>
-        </div>
-        <div class="license-row">
-          <span class="license-row-k">Viewer</span>
-          <span class="license-row-v">Read-only — reports and detection history</span>
-        </div>
-        <div class="license-row" style="border-bottom:none;">
-          <span class="license-row-k">System</span>
-          <span class="license-row-v" style="color:var(--p-success);">&#9679; All pipelines active on local network</span>
+      <div class="lic-card-icon" style="background:#ea580c;">
+        <svg viewBox="0 0 24 24"><rect x="2" y="7" width="6" height="6" rx="1"/>
+          <rect x="9" y="3" width="7" height="7" rx="1"/><rect x="16" y="9" width="6" height="6" rx="1"/>
+          <rect x="6" y="15" width="5" height="6" rx="1"/><rect x="13" y="17" width="5" height="4" rx="1"/></svg>
+      </div>
+      <div class="lic-card-body">
+        <div class="lic-card-name">Object Detection</div>
+        <div class="lic-card-desc">YOLOv8 real-time detection of bottles, chairs, watches, and mobile phones with bounding boxes and per-class confidence scores.</div>
+        <div class="lic-card-meta">
+          <span class="lic-meta-chip">YOLOv8</span>
+          <span class="lic-meta-chip">ONNX Runtime</span>
+          <span class="lic-meta-chip">v1.0</span>
+          <span class="lic-meta-chip">Detection · YOLO</span>
         </div>
       </div>
     </div>
 
-    <!-- ── Disclaimer ── -->
-    <div class="license-card" style="border-color:rgba(245,158,11,.18);">
-      <div class="license-body" style="padding:20px 28px;">
-        <p style="font-size:.8rem;color:var(--p-text3);line-height:1.7;">
-          <strong style="color:var(--p-warning);">&#9888; Disclaimer:</strong>
-          This software is provided "as is" for internal research purposes.
-          The models may produce false positives or miss detections depending on
-          lighting, camera quality, and environmental conditions.
-          Always verify critical security decisions with human review.
-          The developer accepts no liability for misuse or decisions made solely
-          on the basis of this software's output.
-        </p>
+    <!-- Vehicle Detection -->
+    <div class="lic-card">
+      <div class="lic-card-right">
+        <span class="lic-status lic-status--active"><span class="lic-status-dot"></span>Active</span>
+      </div>
+      <div class="lic-card-icon" style="background:#0284c7;">
+        <svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="10" rx="2"/>
+          <circle cx="6" cy="17" r="2"/><circle cx="18" cy="17" r="2"/>
+          <path d="M6 7l2-4h8l2 4"/></svg>
+      </div>
+      <div class="lic-card-body">
+        <div class="lic-card-name">Vehicle Detection</div>
+        <div class="lic-card-desc">Video-file vehicle and license plate detection powered by YOLOv8. Streams annotated frames with bounding boxes and OCR plate text extraction.</div>
+        <div class="lic-card-meta">
+          <span class="lic-meta-chip">YOLOv8</span>
+          <span class="lic-meta-chip">EasyOCR</span>
+          <span class="lic-meta-chip">v1.0</span>
+          <span class="lic-meta-chip">Detection · OCR</span>
+        </div>
       </div>
     </div>
 
-  </div><!-- /license-wrap -->
+  </div>
+
+  <!-- ── PLANNED MODULES ──────────────────────────────────────── -->
+  <div class="lic-section-label" style="margin-top:32px;">Planned Modules</div>
+
+  <div class="license-model-list">
+
+    <!-- Crowd Detection -->
+    <div class="lic-card">
+      <div class="lic-card-right">
+        <span class="lic-status lic-status--planned"><span class="lic-status-dot"></span>Planned</span>
+      </div>
+      <div class="lic-card-icon" style="background:#7c3aed;">
+        <svg viewBox="0 0 24 24"><circle cx="9" cy="7" r="3"/><circle cx="15" cy="7" r="3"/>
+          <path d="M2 21v-1a5 5 0 015-5h1"/><path d="M22 21v-1a5 5 0 00-5-5h-1"/>
+          <circle cx="12" cy="8" r="3"/><path d="M6 21v-1a6 6 0 0112 0v1"/></svg>
+      </div>
+      <div class="lic-card-body">
+        <div class="lic-card-name">Crowd Detection</div>
+        <div class="lic-card-desc">Monitor density and movement anomalies in populated areas with configurable occupancy thresholds. Triggers real-time overcrowding alerts.</div>
+        <div class="lic-card-meta">
+          <span class="lic-meta-chip">YOLOv8</span>
+          <span class="lic-meta-chip">Density Estimation</span>
+          <span class="lic-meta-chip">Analytics · YOLO</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Intrusion Detection -->
+    <div class="lic-card">
+      <div class="lic-card-right">
+        <span class="lic-status lic-status--planned"><span class="lic-status-dot"></span>Planned</span>
+      </div>
+      <div class="lic-card-icon" style="background:#d97706;">
+        <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      </div>
+      <div class="lic-card-body">
+        <div class="lic-card-name">Intrusion Detection</div>
+        <div class="lic-card-desc">Detects unauthorized zone entry and raises high-priority alerts with direction tracking, dwell-time analysis, and instant notification.</div>
+        <div class="lic-card-meta">
+          <span class="lic-meta-chip">YOLOv8</span>
+          <span class="lic-meta-chip">Zone Analysis</span>
+          <span class="lic-meta-chip">Security · Zone</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Fire & Smoke Detection -->
+    <div class="lic-card">
+      <div class="lic-card-right">
+        <span class="lic-status lic-status--planned"><span class="lic-status-dot"></span>Planned</span>
+      </div>
+      <div class="lic-card-icon" style="background:#dc2626;">
+        <svg viewBox="0 0 24 24"><path d="M8.5 14.5A2.5 2.5 0 0011 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 01-7 7 7 7 0 01-7-7c0-1.153.433-2.294 1-3a2.5 2.5 0 002.5 2.5z"/></svg>
+      </div>
+      <div class="lic-card-body">
+        <div class="lic-card-name">Fire &amp; Smoke Detection</div>
+        <div class="lic-card-desc">AI-based early warning system for smoke plumes and visible fire signatures. Provides real-time safety alerts for environmental monitoring.</div>
+        <div class="lic-card-meta">
+          <span class="lic-meta-chip">Custom CNN</span>
+          <span class="lic-meta-chip">Thermal Analysis</span>
+          <span class="lic-meta-chip">Safety · CNN</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Loitering Detection -->
+    <div class="lic-card">
+      <div class="lic-card-right">
+        <span class="lic-status lic-status--planned"><span class="lic-status-dot"></span>Planned</span>
+      </div>
+      <div class="lic-card-icon" style="background:#16a34a;">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      </div>
+      <div class="lic-card-body">
+        <div class="lic-card-name">Loitering Detection</div>
+        <div class="lic-card-desc">Identifies persons who remain stationary in a monitored zone beyond a configurable time threshold. Flags suspicious dwell events automatically.</div>
+        <div class="lic-card-meta">
+          <span class="lic-meta-chip">YOLOv8</span>
+          <span class="lic-meta-chip">ByteTrack</span>
+          <span class="lic-meta-chip">Tracking · Time</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Line Crossing -->
+    <div class="lic-card">
+      <div class="lic-card-right">
+        <span class="lic-status lic-status--planned"><span class="lic-status-dot"></span>Planned</span>
+      </div>
+      <div class="lic-card-icon" style="background:#0369a1;">
+        <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/>
+          <polyline points="12 5 19 12 12 19"/><line x1="2" y1="6" x2="2" y2="18"/></svg>
+      </div>
+      <div class="lic-card-body">
+        <div class="lic-card-name">Line Crossing Detection</div>
+        <div class="lic-card-desc">Triggers an alert when tracked objects cross a configured virtual line in a forbidden direction. Supports bi-directional and one-way enforcement rules.</div>
+        <div class="lic-card-meta">
+          <span class="lic-meta-chip">YOLOv8</span>
+          <span class="lic-meta-chip">Vector Tracking</span>
+          <span class="lic-meta-chip">Tracking · Zone</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
 </div>
 {% endblock %}

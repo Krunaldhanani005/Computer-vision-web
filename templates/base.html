@@ -12,87 +12,69 @@
 </head>
 <body class="platform-body">
 
-  <!-- ── RIGHT SIDEBAR NAVIGATION ─────────────────────────── -->
-  <nav class="sidebar-nav" aria-label="Platform Navigation">
+  <!-- ── TOP NAVIGATION BAR ──────────────────────────────── -->
+  <nav class="top-navbar" aria-label="Platform Navigation">
+    <div class="nav-inner">
 
-    <div class="sb-header">
-      <div class="sb-logo">
-        <div class="sb-logo-icon">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/></svg>
+      <!-- Logo -->
+      <a href="/" class="nav-logo">
+        <img src="/static/nanta-logo.png" alt="NANTA" class="nav-logo-img" />
+        <span class="nav-logo-version">v2.0</span>
+      </a>
+
+      <!-- Nav items -->
+      <ul class="nav-menu">
+        <li class="nav-item" data-page="home">
+          <a href="/" class="nav-link">Home</a>
+        </li>
+
+        <li class="nav-item nav-has-sub" data-page="demo">
+          <span class="nav-link">
+            Live Demo <span class="nav-arrow">▼</span>
+          </span>
+          <ul class="nav-sub">
+            <li><a href="/face-recognition">Face Recognition</a></li>
+            <li><a href="/restricted-area">Restricted Area</a></li>
+            <li><a href="/object-detection">Object Detection</a></li>
+            <li><a href="/vehicle-detection">Vehicle Detection</a></li>
+          </ul>
+        </li>
+
+        <li class="nav-item nav-has-sub" data-page="report">
+          <span class="nav-link">
+            Reports <span class="nav-arrow">▼</span>
+          </span>
+          <ul class="nav-sub">
+            <li><a href="/fr-report">FR Dashboard</a></li>
+            <li><a href="/ra-report">Restricted Area</a></li>
+          </ul>
+        </li>
+
+        <li class="nav-item" data-page="details">
+          <a href="/details" class="nav-link">Details</a>
+        </li>
+
+        <li class="nav-item" data-page="license">
+          <a href="/license" class="nav-link">License</a>
+        </li>
+      </ul>
+
+      <!-- Right section -->
+      <div class="nav-right">
+        <div class="nav-status">
+          <div class="nav-status-dot"></div>
+          System Active
         </div>
-        <div>
-          <div class="sb-logo-text">CV Platform</div>
-          <div class="sb-version">v2.0.0</div>
+        <div class="nav-user">
+          <div class="nav-user-avatar">NT</div>
+          <span class="nav-user-label">NantaTech</span>
         </div>
       </div>
+
     </div>
-
-    <ul class="sb-menu">
-      <li class="sb-item" data-page="home">
-        <a href="/" class="sb-link" title="Home">
-          <span class="sb-icon">
-            <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-          </span>
-          <span class="sb-label">Home</span>
-        </a>
-      </li>
-      <li class="sb-item" data-page="demo">
-        <div class="sb-link sb-has-sub" style="cursor:pointer;" onclick="this.parentElement.classList.toggle('open')">
-          <span class="sb-icon">
-            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
-          </span>
-          <span class="sb-label">Live Demo</span>
-          <span style="margin-left:auto; font-size:0.6rem; opacity:0.6; padding-right:5px;">▼</span>
-        </div>
-        <ul class="sb-sub-menu">
-          <li><a href="/face-recognition" class="sb-sub-link">Face Recognition</a></li>
-          <li><a href="/restricted-area" class="sb-sub-link">Restricted Area</a></li>
-          <li><a href="/object-detection" class="sb-sub-link">Object Detection</a></li>
-          <li><a href="/vehicle-detection" class="sb-sub-link">Vehicle Detection</a></li>
-        </ul>
-      </li>
-      <li class="sb-item" data-page="report">
-        <div class="sb-link sb-has-sub" style="cursor:pointer;" onclick="this.parentElement.classList.toggle('open')">
-          <span class="sb-icon">
-            <svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-          </span>
-          <span class="sb-label">Reports</span>
-          <span style="margin-left:auto;font-size:0.6rem;opacity:0.6;padding-right:5px;">▼</span>
-        </div>
-        <ul class="sb-sub-menu">
-          <li><a href="/report"     class="sb-sub-link">Detection Report</a></li>
-          <li><a href="/fr-report"  class="sb-sub-link">&#9685; FR Dashboard</a></li>
-          <li><a href="/ra-report"  class="sb-sub-link">&#128274; Restricted Area</a></li>
-        </ul>
-      </li>
-      <li class="sb-item" data-page="details">
-        <a href="/details" class="sb-link" title="Details">
-          <span class="sb-icon">
-            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          </span>
-          <span class="sb-label">Details</span>
-        </a>
-      </li>
-      <li class="sb-item" data-page="license">
-        <a href="/license" class="sb-link" title="License">
-          <span class="sb-icon">
-            <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-          </span>
-          <span class="sb-label">License</span>
-        </a>
-      </li>
-    </ul>
-
-    <div class="sb-footer">
-      <div class="sb-status">
-        <div class="sb-status-dot"></div>
-        <span class="sb-label">System Active</span>
-      </div>
-    </div>
-
   </nav>
 
-  <!-- ── MAIN CONTENT ──────────────────────────────────────── -->
+  <!-- ── MAIN CONTENT ──────────────────────────────────── -->
   <div class="p-main">
     {% block content %}{% endblock %}
   </div>
