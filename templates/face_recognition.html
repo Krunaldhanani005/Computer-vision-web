@@ -290,24 +290,37 @@
   };
 
   window.clearZone = async function(prefix) {
+    // Immediately clear local state FIRST (instant UI feedback)
+    points = [];
+    drawing = true;
+    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Update UI immediately — don't wait for server
+    const instr = document.getElementById('zone-instructions');
+    if (instr) {
+      instr.style.display = 'block';
+      instr.className = 'ent-zone-hint ent-zone-hint--draw';
+      instr.innerHTML = '<strong>&#9670; Polygon Zone Mode</strong><br>Click on the video to add points. Need &ge;3 points to save.';
+    }
+    const gs = document.getElementById('global-status');
+    if (gs) { gs.textContent = 'Zone deleted. Click video to start new zone.'; gs.className = 'ent-status-box info'; }
+
+    // Re-initialize canvas for new drawing (restores click handler)
+    initCanvas(prefix);
+
+    // Now send to server (non-blocking for UI, but we still await for error handling)
     try {
-      await fetch('/save_zone', {
+      const resp = await fetch('/save_zone', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ zone: null })
       });
-      points = [];
-      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
-      if (canvas) initCanvas(prefix);
-      const instr = document.getElementById('zone-instructions');
-      if (instr) {
-        instr.style.display = 'block';
-        instr.className = 'ent-zone-hint ent-zone-hint--draw';
-        instr.innerHTML = '<strong>&#9670; Polygon Zone Mode</strong><br>Click on the video to add points. Need &ge;3 points to save.';
+      const result = await resp.json();
+      if (!result.success) {
+        console.warn('[zone] Server failed to clear zone:', result);
       }
-      const gs = document.getElementById('global-status');
-      if (gs) { gs.textContent = 'Zone deleted. Click video to start new zone.'; gs.className = 'ent-status-box info'; }
     } catch (err) {
+      console.error('[zone] Error clearing zone:', err);
       alert('Error clearing zone.');
     }
   };

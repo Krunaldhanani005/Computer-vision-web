@@ -53,7 +53,7 @@ class CameraManager:
                 with self._frame_lock:
                     self._latest_frame = frame
                 # Minimal sleep — let CPU breathe without capping FPS too hard
-                time.sleep(0.005)
+                time.sleep(0.001)
             else:
                 consecutive_failures += 1
 
@@ -102,8 +102,8 @@ class CameraManager:
         else:
             cap = cv2.VideoCapture(source)
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
             cap.set(cv2.CAP_PROP_FPS, 30)
 
         return cap

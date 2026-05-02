@@ -56,9 +56,9 @@ for _d in [_SNAP_DIR, _REPORT_DIR, _DIR_KNOWN, _DIR_UNKNOWN, _DIR_BLACKLIST]:
 # dist ≤ KNOWN_THRESHOLD     → known match
 # dist > UNKNOWN_THRESHOLD   → classified as Unknown
 # (gap between KNOWN and UNKNOWN handled by 3-frame confirmation vote)
-BLACKLIST_THRESHOLD = 0.40
-KNOWN_THRESHOLD     = 0.50   # raised to 0.50 — reduces known→unknown false negatives on CCTV
-UNKNOWN_THRESHOLD   = 0.60
+BLACKLIST_THRESHOLD = 0.45
+KNOWN_THRESHOLD     = 0.55   # raised to 0.55 — better tolerance for CCTV angle/light variation
+UNKNOWN_THRESHOLD   = 0.65
 DISTANCE_THRESHOLD  = KNOWN_THRESHOLD  # backward-compat alias
 
 # ── In-memory encoding cache ──────────────────────────────────────────────────
@@ -664,7 +664,7 @@ def recognize(frame: np.ndarray, face_data: tuple):
 import time as _time
 
 _LATCH_SECS  = 5.0
-_MIN_CONFIRM = 3   # 3-frame confirmation — all 3 must agree before committing label
+_MIN_CONFIRM = 5   # 5-frame confirmation — all 5 must agree before committing known/blacklist label
 
 # ── Unknown-person grouping cache ──────────────────────────────────────────────
 # Stores (temp_id, embedding, monotonic_timestamp) for recently seen unknowns.
@@ -714,7 +714,7 @@ class IdentityTracker:
     - Unknown saved once per slot (not repeatedly)
     """
 
-    def __init__(self, history_len: int = 3, stale_frames: int = 20):
+    def __init__(self, history_len: int = 5, stale_frames: int = 20):
         self.history_len  = history_len
         self.stale_frames = stale_frames
         self.faces: list  = []
@@ -809,10 +809,10 @@ class IdentityTracker:
             k = (n, t)
             counts[k] = counts.get(k, 0) + 1
         voted_name, voted_type = max(counts, key=counts.get)
-        voted_conf  = next((c for (n, t, c) in reversed(entries) if n == voted_name), confidence)
+        voted_conf  = sum(c for (n, t, c) in entries if n == voted_name) / max(1, counts[(voted_name, voted_type)])  # average confidence across matching frames
         vote_ratio  = counts[(voted_name, voted_type)] / len(entries)
 
-        # Known/blacklist: require ALL 3 frames to agree (prevents single-frame flip)
+        # Known/blacklist: require ALL 5 frames to agree (prevents single-frame flip)
         # Unknown: simple majority (0.5) is sufficient
         required_ratio = 1.0 if voted_type in ("known", "blacklist") else 0.5
         if vote_ratio < required_ratio:

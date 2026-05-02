@@ -32,13 +32,13 @@ _MODEL_CANDIDATES = [
 _MODEL_FILE = next((p for p in _MODEL_CANDIDATES if os.path.exists(p)), None)
 
 # ── Detection hyper-parameters ────────────────────────────────────────────────
-_SCORE_THRESHOLD  = 0.30   # raised from 0.25 → fewer background FPs
-_POST_NMS_THRESH  = 0.35   # second confidence gate after NMS (kills weak survivors)
+_SCORE_THRESHOLD  = 0.35   # raised from 0.30 → fewer background FPs
+_POST_NMS_THRESH  = 0.40   # second confidence gate after NMS (kills weak survivors)
 _NMS_IOU          = 0.45   # stronger NMS (was 0.40) — removes more duplicate boxes
 _INPUT_SIZE       = 640    # fastest inference; upscale pass handles far faces
 _STRIDES          = [8, 16, 32]
 _NUM_ANCHORS      = 2
-_MIN_SHARPNESS    = 10.0   # Laplacian variance threshold for face crop quality
+_MIN_SHARPNESS    = 12.0   # Laplacian variance threshold for face crop quality
 
 # ── Enhancement throttle ──────────────────────────────────────────────────────
 _ENHANCE_EVERY   = 3        # run CLAHE+sharpen every N frames, reuse cache otherwise
@@ -46,12 +46,12 @@ _enhance_counter  = 0
 _last_enhanced: np.ndarray | None = None
 
 # ── EMA smoothing ─────────────────────────────────────────────────────────────
-_BOX_ALPHA     = 0.55
+_BOX_ALPHA     = 0.40
 _EMA_IOU_MATCH = 0.20       # slightly higher link threshold for better stability
 _prev_boxes: list = []
 
 # ── CLAHE + sharpening ────────────────────────────────────────────────────────
-_clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+_clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
 _SHARPEN_KERNEL = np.array(
     [[ 0, -0.5,  0],
      [-0.5, 3.0, -0.5],

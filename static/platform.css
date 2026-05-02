@@ -19,7 +19,7 @@
   --p-text:        #111827;
   --p-text2:       #374151;
   --p-text3:       #6B7280;
-  --p-text4:       #D1D5DB;
+  --p-text4:       #9CA3AF;
 
   --p-border:      #E4E7EC;
   --p-border2:     rgba(215, 38, 56, 0.2);
@@ -47,6 +47,59 @@
   --p-accent:      var(--p-red);
   --p-accent-glow: transparent;
   --p-accent-dim:  var(--p-red-light);
+}
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  GLOBAL TYPOGRAPHY SYSTEM                               ║
+   ╚══════════════════════════════════════════════════════════╝ */
+
+/* ── Text color utilities ── */
+.text-primary   { color: var(--p-text)  !important; }   /* #111827 — headings, names, strong values */
+.text-secondary { color: var(--p-text2) !important; }   /* #374151 — body text, descriptions */
+.text-muted     { color: var(--p-text3) !important; }   /* #6B7280 — labels, hints, readable gray */
+.text-faint     { color: #9CA3AF       !important; }   /* placeholders only (still readable) */
+.text-danger    { color: var(--p-danger)!important; }   /* #D72638 */
+.text-success   { color: var(--p-success)!important;}   /* #22C55E */
+.text-warning   { color: var(--p-warning)!important;}   /* #F59E0B */
+.text-info      { color: var(--p-info)  !important; }   /* #0284c7 */
+.text-accent    { color: var(--p-red)   !important; }   /* brand red */
+
+/* ── Font weight utilities ── */
+.fw-400 { font-weight: 400 !important; }
+.fw-500 { font-weight: 500 !important; }
+.fw-600 { font-weight: 600 !important; }
+.fw-700 { font-weight: 700 !important; }
+.fw-800 { font-weight: 800 !important; }
+
+/* ── Card metadata label/value pattern ── */
+.meta-label { font-size: .7rem; color: var(--p-text3); font-weight: 600; }
+.meta-value { font-size: .82rem; color: var(--p-text); font-weight: 600; }
+
+/* ── Global form inputs (date, search, filters) ── */
+input[type="date"],
+input[type="search"],
+input[type="text"],
+select {
+  color: var(--p-text);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-weight: 500;
+}
+
+input[type="date"]::placeholder,
+input[type="search"]::placeholder,
+input[type="text"]::placeholder {
+  color: #9CA3AF;
+  font-weight: 400;
+}
+
+/* Calendar icon visibility for date inputs */
+input[type="date"]::-webkit-calendar-picker-indicator {
+  opacity: 0.6;
+  cursor: pointer;
+  filter: none;
+}
+input[type="date"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
 }
 
 /* ── Resets ─────────────────────────────────────────────── */
@@ -1679,7 +1732,7 @@ body.platform-body main {
   margin-bottom: 4px;
 }
 .ent-upload-zone .uz-text { font-size: .84rem; color: var(--p-text2); font-weight: 500; text-align: center; }
-.ent-upload-zone .uz-sub  { font-size: .73rem; color: var(--p-text4); text-align: center; }
+.ent-upload-zone .uz-sub  { font-size: .73rem; color: var(--p-text3); text-align: center; }
 
 .ent-thumb-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .ent-thumb { width: 52px; height: 52px; object-fit: cover; border-radius: 6px; border: 1px solid var(--p-border); }

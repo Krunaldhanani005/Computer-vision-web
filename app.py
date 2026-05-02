@@ -127,9 +127,9 @@ fr_last_results: list  = []   # latest recognized results (name + label)
 fr_detect_boxes: list  = []   # latest raw detection boxes (for immediate display)
 
 # ── FR streaming performance ───────────────────────────────────────────────────
-_DISPLAY_W       = 800         # display output width — slightly reduced for faster JPEG encode
-_FR_RECOG_EVERY  = 5           # submit ArcFace every Nth detection frame
-_FR_DETECT_EVERY = 2           # run SCRFD only every Nth raw frame (halves detector cost)
+_DISPLAY_W       = 1024        # display output width — higher for clearer face detail
+_FR_RECOG_EVERY  = 3           # submit ArcFace every Nth detection frame (faster label update)
+_FR_DETECT_EVERY = 1           # run SCRFD every raw frame (no skip — more responsive)
 _fr_detect_count = 0           # raw frame counter for detection skip
 _fr_recog_count  = 0           # detection-frame counter for recognition interval
 _fr_recog_cache: list = []     # [{box,name,type,conf,ts}] — reuse identity for latched faces
@@ -202,9 +202,9 @@ class _FRDisplayTracker:
     Reduces jitter in SCRFD output without touching recognition accuracy.
     Runs synchronously every frame on the raw detect boxes before drawing.
     """
-    _ALPHA    = 0.65   # weight on new detection (higher → more responsive)
+    _ALPHA    = 0.50   # weight on new detection (lower → heavier smoothing, less jitter)
     _IOU_LINK = 0.25   # min IoU to link a detection to an existing track
-    _MAX_AGE  = 6      # frames a track survives without a matching detection
+    _MAX_AGE  = 8      # frames a track survives without a matching detection
 
     def __init__(self):
         self._tracks: list = []   # [{box:(x,y,w,h), age:int}]
@@ -567,12 +567,18 @@ def ra_get_zone():
 
 @app.route("/save_zone", methods=["POST"])
 def save_zone():
-    global fr_last_results
+    global fr_last_results, fr_detect_boxes, _zone_cache_pts, _zone_cache_frame
     data      = request.json
     zone_data = data.get("zone", None)
 
     reset_tracking_state()
     fr_last_results = []
+    fr_detect_boxes = []
+
+    # Force-invalidate the streaming loop's zone cache so the change takes
+    # effect on the very next rendered frame (not after 60-frame delay).
+    _zone_cache_pts   = None
+    _zone_cache_frame = _ZONE_CACHE_EVERY  # triggers immediate reload on next frame
 
     if zone_data is None:
         zone_manager.clear_zone()
@@ -955,7 +961,7 @@ def generate_fr_frames():
                         cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 2)
 
         # Opt 7: JPEG 72 for stream — smaller frames, faster browser decode
-        _, buf = cv2.imencode(".jpg", disp, [cv2.IMWRITE_JPEG_QUALITY, 72])
+        _, buf = cv2.imencode(".jpg", disp, [cv2.IMWRITE_JPEG_QUALITY, 82])
         yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
 
 
