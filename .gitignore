@@ -1,57 +1,55 @@
-static/fr_logs/
-static/fr_reports/
-static/restricted_area/
-images/
-models/**/weights/
-*.onnx
-*.pt
-*.pth# ── Temporary video uploads (auto-deleted after processing) ──
-temp_uploads/
-uploads/
-
-# Python
-__pycache__/
-*.pyc
-venv/
-.env
-
-# Runtime images/logs
-static/fr_logs/
-static/fr_reports/
-static/restricted_area/
-images/
-
-# Model weights only (NOT code)
-models/**/weights/
-*.onnx
-*.pt
-*.pth
-*.caffemodel
-
-# Temp
-temp_uploads/
 # ── Python ──
 __pycache__/
 *.py[cod]
-*.pyo
+*$py.class
+*.so
 .Python
+build/
+dist/
+*.egg-info/
+.eggs/
 
-# ── Virtual environment ──
+# ── Virtual Environment ──
 venv/
 .venv/
 env/
+ENV/
 
-# ── Environment secrets ──
+# ── Secrets & Config ──
 .env
 
-# ── ML model weights ──
-*.pt
-*.h5
-
-# ── OS ──
+# ── OS Files ──
 .DS_Store
 Thumbs.db
 
-# Alerts images (DO NOT PUSH)
+# ── Model Weights (Never commit large binaries) ──
+weights/*.pt
+weights/*.onnx
+weights/*.pth
+weights/*.caffemodel
+*.pt
+*.onnx
+*.caffemodel
+
+# ── Runtime Logs & Snapshots ──
+app/static/fr_logs/
+app/static/fr_reports/
+app/static/restricted_area/
+app/static/alerts/
+static/fr_logs/
+static/fr_reports/
+static/restricted_area/
 static/alerts/
+images/
+
+# ── Uploads & Temp Files ──
+temp_uploads/
+uploads/
+zone_debug.txt
 test.jpg
+
+# ── Exports & Data ──
+*.xlsx
+*.csv
+*.db
+*.sqlite3

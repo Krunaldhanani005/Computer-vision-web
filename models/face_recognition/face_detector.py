@@ -25,9 +25,10 @@ import onnxruntime as ort
 
 # ── Model paths ───────────────────────────────────────────────────────────────
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_WEIGHTS_DIR = os.path.join(_BASE_DIR, "..", "..", "weights")
 _MODEL_CANDIDATES = [
-    os.path.join(_BASE_DIR, "weights", "det_10g.onnx"),
-    os.path.join(_BASE_DIR, "weights", "scrfd_10g_bnkps.onnx"),
+    os.path.join(_WEIGHTS_DIR, "det_10g.onnx"),
+    os.path.join(_WEIGHTS_DIR, "scrfd_10g_bnkps.onnx"),
 ]
 _MODEL_FILE = next((p for p in _MODEL_CANDIDATES if os.path.exists(p)), None)
 

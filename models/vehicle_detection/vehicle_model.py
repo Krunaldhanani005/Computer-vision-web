@@ -6,7 +6,7 @@ from ultralytics import YOLO
 from .ocr_utils import extract_plate_text
 
 # Lightweight model for smooth CPU streaming
-vehicle_model = YOLO("yolov8n.pt")
+vehicle_model = YOLO(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "weights", "yolov8n.pt"))
 
 # Dedicated plate model if available
 try:

@@ -8,7 +8,7 @@ Runs on a shared yolov8n model, lightweight and fast.
 import os
 from ultralytics import YOLO
 
-_model = YOLO("yolov8n.pt")   # nano — fast, sufficient for person detection
+_model = YOLO(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "weights", "yolov8n.pt"))   # nano — fast, sufficient for person detection
 _PERSON_CLASS = 0
 _CONF_THRESHOLD = 0.50
 

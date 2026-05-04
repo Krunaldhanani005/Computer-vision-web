@@ -13,6 +13,7 @@ Pipeline stages:
 """
 
 import cv2
+import os
 import numpy as np
 from collections import deque, defaultdict
 from ultralytics import YOLO
@@ -20,7 +21,7 @@ from ultralytics import YOLO
 # ══════════════════════════════════════════════════════════════════════════════
 #  MODEL & CONSTANTS
 # ══════════════════════════════════════════════════════════════════════════════
-model = YOLO("yolov8s.pt")
+model = YOLO(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "weights", "yolov8s.pt"))
 
 _ALLOWED = {'bottle', 'chair', 'clock', 'cell phone', 'remote'}
 
@@ -44,8 +45,8 @@ CLASS_CONF = {
     'bottle':     0.35,
     'chair':      0.55,
     'clock':      0.25,
-    'cell phone': 0.55,   # high to reject remote-control cross-talk
-    'remote':     0.40,   # we detect remotes just to suppress phone conflicts
+    'cell phone': 0.52,   # high to reject remote-control cross-talk
+    'remote':     0.42,   # we detect remotes just to suppress phone conflicts
 }
 
 # ── Per-class minimum box size (pixels) ───────────────────────────────────────
@@ -61,7 +62,7 @@ CLASS_MIN_SIZE = {
 # Each class must be seen for N consecutive frames before it's emitted.
 _CONFIRM_FRAMES = {
     'bottle':     2,
-    'chair':      2,
+    'chair':      3,
     'clock':      2,
     'cell phone': 4,   # stricter — remotes cause 1-2 frame flickers
     'remote':     2,

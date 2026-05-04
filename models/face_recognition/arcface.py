@@ -4,7 +4,7 @@ import onnxruntime as ort
 import os
 
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_ARCFACE_MODEL = os.path.join(_BASE_DIR, "weights", "w600k_r50.onnx")
+_ARCFACE_MODEL = os.path.join(_BASE_DIR, "..", "..", "weights", "w600k_r50.onnx")
 
 _arcface_session = None
 if os.path.exists(_ARCFACE_MODEL):

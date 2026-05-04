@@ -37,7 +37,7 @@ from .fr_database import (
 
 # ── Snapshot storage directories ──────────────────────────────────────────────────
 _BASE_STATIC = os.path.normpath(os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "..", "static"
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "app", "static"
 ))
 
 _SNAP_DIR   = os.path.join(_BASE_STATIC, "fr_logs")

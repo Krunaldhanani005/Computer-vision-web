@@ -1,3 +1,6 @@
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 print("Starting server... loading libraries (this may take a minute)")
 import time
 import threading
@@ -26,7 +29,7 @@ TEMP_FOLDER = "temp_uploads"
 os.makedirs(TEMP_FOLDER, exist_ok=True)
 
 # Snapshot folder
-SNAPSHOT_FOLDER = os.path.join("static", "fr_logs")
+SNAPSHOT_FOLDER = os.path.join(os.path.dirname(__file__), "static", "fr_logs")
 os.makedirs(SNAPSHOT_FOLDER, exist_ok=True)
 
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
@@ -34,9 +37,9 @@ MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SHARED CAMERA — managed by camera_manager
 # ═══════════════════════════════════════════════════════════════════════════════
-from camera_manager import camera_manager
-from ra_camera_manager import ra_camera_manager
-from zone_manager import zone_manager
+from services.camera.camera_manager import camera_manager
+from services.camera.ra_camera_manager import ra_camera_manager
+from services.zones.zone_manager import zone_manager
 
 camera_source_config = {"type": "webcam", "url": None}
 
@@ -344,7 +347,7 @@ def serve_snapshot(filename):
 
 @app.route("/static/fr_reports/<filename>")
 def serve_report_snapshot(filename):
-    return send_from_directory(os.path.join("static", "fr_reports"), filename)
+    return send_from_directory(os.path.join(os.path.dirname(__file__), "static", "fr_reports"), filename)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -669,7 +672,7 @@ def _fr_detect_zone_roi(orig_frame: np.ndarray, zone_snapshot: list,
     Returns list of (x, y, w, h, landmarks_or_None, conf) in original-frame coords.
     """
     from models.face_recognition.face_detector import get_faces_dnn
-    from zone_manager import zone_manager as _zm
+    from services.zones.zone_manager import zone_manager as _zm
 
     if not zone_snapshot or len(zone_snapshot) < 3:
         return []

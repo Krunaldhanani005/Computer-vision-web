@@ -38,7 +38,7 @@ from .database import (
 )
 
 # ── RA snapshot directories ───────────────────────────────────────────────────
-_RA_SNAP_ROOT    = os.path.join("static", "restricted_area")
+_RA_SNAP_ROOT    = os.path.join("app", "static", "restricted_area")
 _RA_SNAP_UNKNOWN = os.path.join(_RA_SNAP_ROOT, "unknown")
 _RA_SNAP_BL      = os.path.join(_RA_SNAP_ROOT, "blacklist")
 for _d in [_RA_SNAP_ROOT, _RA_SNAP_UNKNOWN, _RA_SNAP_BL]:
