@@ -45,8 +45,8 @@ CLASS_CONF = {
     'bottle':     0.35,
     'chair':      0.55,
     'clock':      0.25,
-    'cell phone': 0.52,   # high to reject remote-control cross-talk
-    'remote':     0.42,   # we detect remotes just to suppress phone conflicts
+    'cell phone': 0.45,   # restored sensitivity for real phones
+    'remote':     0.01,   # ultra-low threshold: YOLO's hidden remote predictions will suppress phones
 }
 
 # ── Per-class minimum box size (pixels) ───────────────────────────────────────
@@ -64,22 +64,15 @@ _CONFIRM_FRAMES = {
     'bottle':     2,
     'chair':      3,
     'clock':      2,
-    'cell phone': 4,   # stricter — remotes cause 1-2 frame flickers
+    'cell phone': 3,   # stricter — remotes cause 1-2 frame flickers
     'remote':     2,
 }
-
-# ── Box smoothing ─────────────────────────────────────────────────────────────
-_BOX_HISTORY_LEN = 6       # frames to average over
-_BOX_ALPHA       = 0.45    # EMA weight for new box (higher = less smooth)
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  STATE  (module-level, reset automatically as objects appear/disappear)
 # ══════════════════════════════════════════════════════════════════════════════
-_streak: dict[str, int]        = defaultdict(int)     # consecutive-frame counters
-_confirmed: dict[str, bool]    = defaultdict(bool)    # True once streak >= threshold
-_smooth_boxes: dict[str, list] = {}                   # EMA-smoothed box per class
-_box_ring: dict[str, deque]    = {}                   # raw box history per class
+_TRACKS: dict[int, dict] = {}
+_NEXT_TRACK_ID = 1
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -127,21 +120,110 @@ def _iou(a, b) -> float:
     union  = area_a + area_b - inter
     return inter / union if union > 0 else 0.0
 
-def _smooth_box(cls: str, box: tuple) -> tuple:
-    """EMA-based box smoothing per class — removes jitter across frames."""
-    if cls not in _smooth_boxes:
-        _smooth_boxes[cls] = list(box)
-        _box_ring[cls]     = deque(maxlen=_BOX_HISTORY_LEN)
-
-    _box_ring[cls].append(box)
-
-    # EMA update
-    s = _smooth_boxes[cls]
-    a = _BOX_ALPHA
-    for i in range(4):
-        s[i] = int(s[i] * (1 - a) + box[i] * a)
-    _smooth_boxes[cls] = s
-    return tuple(s)
+def _track_objects(detections: list) -> list:
+    global _NEXT_TRACK_ID, _TRACKS
+    
+    matched_tracks = set()
+    results = []
+    
+    for det in detections:
+        cls = det['class_name']
+        box = det['bbox']
+        conf = det['confidence']
+        
+        best_iou = 0.30
+        best_id = None
+        for tid, track in _TRACKS.items():
+            if track['class'] != cls:
+                continue
+            iou = _iou(box, track['bbox'])
+            if iou > best_iou:
+                best_iou = iou
+                best_id = tid
+                
+        if best_id is not None:
+            track = _TRACKS[best_id]
+            matched_tracks.add(best_id)
+            track['hits'] += 1
+            track['age'] = 0
+            
+            old_box = track['bbox']
+            
+            cx_old = (old_box[0] + old_box[2]) / 2
+            cy_old = (old_box[1] + old_box[3]) / 2
+            cx_new = (box[0] + box[2]) / 2
+            cy_new = (box[1] + box[3]) / 2
+            dist = (cx_old - cx_new)**2 + (cy_old - cy_new)**2
+            
+            if cls == 'chair':
+                # Chair stabilization logic
+                if conf < 0.65 and track['hits'] > 5:
+                    new_box = old_box
+                elif dist < 64 or best_iou > 0.85: # less than 8px move -> lock box
+                    new_box = old_box
+                else:
+                    alpha = 0.15
+                    new_box = tuple(int(old_box[i] * (1-alpha) + box[i] * alpha) for i in range(4))
+            else:
+                alpha = 0.40
+                new_box = tuple(int(old_box[i] * (1-alpha) + box[i] * alpha) for i in range(4))
+                
+            track['bbox'] = new_box
+            track['last_conf'] = conf
+            
+            results.append({
+                'track_id': best_id,
+                'class_name': cls,
+                'confidence': conf,
+                'bbox': new_box
+            })
+        else:
+            tid = _NEXT_TRACK_ID
+            _NEXT_TRACK_ID += 1
+            _TRACKS[tid] = {
+                'class': cls,
+                'bbox': box,
+                'age': 0,
+                'hits': 1,
+                'last_conf': conf
+            }
+            matched_tracks.add(tid)
+            results.append({
+                'track_id': tid,
+                'class_name': cls,
+                'confidence': conf,
+                'bbox': box
+            })
+            
+    # Age out and persistence
+    for tid in list(_TRACKS.keys()):
+        if tid not in matched_tracks:
+            _TRACKS[tid]['age'] += 1
+            persistence = 10 if _TRACKS[tid]['class'] == 'chair' else 3
+            if _TRACKS[tid]['age'] > persistence:
+                del _TRACKS[tid]
+            else:
+                results.append({
+                    'track_id': tid,
+                    'class_name': _TRACKS[tid]['class'],
+                    'confidence': _TRACKS[tid].get('last_conf', 0.0),
+                    'bbox': _TRACKS[tid]['bbox']
+                })
+                
+    confirmed = []
+    for r in results:
+        cls = r['class_name']
+        if cls == 'remote':
+            continue
+        req_hits = _CONFIRM_FRAMES.get(cls, 3)
+        if _TRACKS[r['track_id']]['hits'] >= req_hits:
+            confirmed.append({
+                'class_name': cls,
+                'confidence': r['confidence'],
+                'bbox': r['bbox']
+            })
+            
+    return confirmed
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -160,8 +242,9 @@ def _validate_shape(cls: str, x1, y1, x2, y2, frame_h, frame_w) -> bool:
 
     # ── Cell phone ────────────────────────────────────────────────────────
     if cls == 'cell phone':
-        # Phones are roughly portrait (aspect 0.35–1.8)
-        if aspect > 2.0 or aspect < 0.28:
+        # Real phones are rarely narrower than 0.42 aspect ratio.
+        # Elongated AC remotes are typically 0.25–0.38.
+        if aspect > 2.0 or aspect < 0.40:
             return False
         # Must have minimum pixel area (remotes are smaller on camera)
         if w < 35 or h < 50:
@@ -238,25 +321,7 @@ def _cross_class_nms(candidates: list) -> list:
     return keep
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  TEMPORAL CONFIRMATION
-# ══════════════════════════════════════════════════════════════════════════════
-def _update_streaks(seen_classes: set):
-    """
-    Update per-class streak counters.
-    Classes present this frame get their streak incremented.
-    Classes absent are reset to 0.
-    """
-    all_tracked = set(_streak.keys()) | seen_classes
-    for cls in all_tracked:
-        if cls in seen_classes:
-            _streak[cls] += 1
-            threshold = _CONFIRM_FRAMES.get(cls, 3)
-            if _streak[cls] >= threshold:
-                _confirmed[cls] = True
-        else:
-            _streak[cls]    = 0
-            _confirmed[cls] = False
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -273,7 +338,8 @@ def detect_objects(frame: np.ndarray) -> list:
     processed = _preprocess(frame)
 
     # ── 2. YOLO inference ─────────────────────────────────────────────────────
-    results = model(processed, imgsz=704, conf=0.20, iou=0.45, verbose=False)
+    # conf=0.01 exposes weak predictions so our cross-class NMS can use them
+    results = model(processed, imgsz=704, conf=0.01, iou=0.45, verbose=False)
 
     # ── 3. Class-specific threshold + size filter ─────────────────────────────
     raw_candidates = []
@@ -303,6 +369,26 @@ def detect_objects(frame: np.ndarray) -> list:
             # Shape / spatial validation
             if not _validate_shape(cls_name, x1, y1, x2, y2, frame_h, frame_w):
                 continue
+                
+            # ── AC Remote Visual Heuristic ────────────────────────────────────
+            # To strictly prevent white AC remotes from being detected as phones:
+            if cls_name == 'cell phone' and h > 60 and w > 30:
+                aspect = w / (h + 1e-5)
+                # AC remotes are tall (aspect < 0.65)
+                if aspect < 0.65:
+                    # Take center 50% width to avoid fingers
+                    cx1, cx2 = x1 + int(w * 0.25), x2 - int(w * 0.25)
+                    if cx2 > cx1:
+                        crop = frame[y1:y2, cx1:cx2]
+                        if crop.size > 0:
+                            gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+                            split_y = int(h * 0.35) # top 35% is screen
+                            if 0 < split_y < h:
+                                top_mean = np.mean(gray[:split_y, :])
+                                bot_mean = np.mean(gray[split_y:, :])
+                                # AC remotes: bottom is bright white plastic, top is dark screen
+                                if bot_mean > 130 and top_mean < 115 and (bot_mean - top_mean) > 40:
+                                    continue # Rejected! It matches the visual profile of an AC remote.
 
             seen_classes.add(cls_name)
             raw_candidates.append({
@@ -314,29 +400,8 @@ def detect_objects(frame: np.ndarray) -> list:
     # ── 4. Cross-class conflict resolution ────────────────────────────────────
     resolved = _cross_class_nms(raw_candidates)
 
-    # ── 5. Temporal confirmation ──────────────────────────────────────────────
-    _update_streaks(seen_classes)
-
-    confirmed_dets = []
-    for det in resolved:
-        cls = det['class_name']
-        # 'remote' is used only for conflict suppression — never displayed
-        if cls == 'remote':
-            continue
-        if _confirmed.get(cls, False):
-            # Smooth box coordinates
-            sx1, sy1, sx2, sy2 = _smooth_box(cls, det['bbox'])
-            confirmed_dets.append({
-                'class_name': cls,
-                'confidence': det['confidence'],
-                'bbox':       (sx1, sy1, sx2, sy2),
-            })
-
-    # ── 6. Clear smoothing state for classes that disappeared ─────────────────
-    for cls in list(_smooth_boxes.keys()):
-        if cls not in seen_classes:
-            _smooth_boxes.pop(cls, None)
-            _box_ring.pop(cls, None)
+    # ── 5. Temporal tracking and confirmation ─────────────────────────────────
+    confirmed_dets = _track_objects(resolved)
 
     return confirmed_dets
 
