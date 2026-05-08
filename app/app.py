@@ -43,9 +43,6 @@ from services.zones.zone_manager import zone_manager
 
 camera_source_config = {"type": "webcam", "url": None}
 
-# Hardcoded RA CCTV stream (@ in password URL-encoded as %40)
-_RA_CCTV_URL = "rtsp://Test:Nanta%40123@192.168.29.118:554/1/1?transmode=unicast&profile=vam"
-
 
 def _build_cctv_url():
     """Build authenticated RTSP/HTTP URL from .env credentials."""
@@ -259,6 +256,7 @@ class _FRDisplayTracker:
 
 
 _fr_display_tracker = _FRDisplayTracker()
+_ra_display_tracker = _FRDisplayTracker()
 
 
 def _remap_recog_to_boxes(results: list, det_boxes: list,
@@ -537,6 +535,14 @@ def api_export_restricted_area():
     resp.headers["Content-Type"] = "text/csv"
     resp.headers["Content-Disposition"] = "attachment; filename=restricted_area_report.csv"
     return resp
+
+@app.route("/api/report/restricted_area/delete_all", methods=["POST"])
+def api_ra_delete_all():
+    from models.restricted_area.database import delete_all_ra_logs
+    success = delete_all_ra_logs()
+    if success:
+        return jsonify({"success": True})
+    return jsonify({"success": False, "error": "Failed to delete RA reports"}), 500
 
 # ── RA Zone Routes (separate from FR zones) ──────────────────────────────────
 @app.route("/ra/save_zone", methods=["POST"])
@@ -1068,14 +1074,13 @@ def stop_object_camera():
 # RA-specific source config (independent from FR's camera_source_config)
 _ra_source_config = {"type": "webcam", "url": None}
 
-# Predefined CCTV stream for RA (@ in password kept raw — ffmpeg parses last @ as host sep)
-_RA_CCTV_URL = "rtsp://Test:Nanta@123@192.168.29.118:554/1/1?transmode=unicast&profile=vam"
-
 
 def generate_restricted_frames():
     global is_restricted_streaming, ra_future, ra_last_results
     from models.restricted_area import process_frame
     from models.restricted_area.database import load_ra_zone
+    from face_engine import detect_faces
+    from services.zones.zone_manager import zone_manager as _zm
 
     _ra_skip = 0
     _RA_PROCESS_EVERY = 2
@@ -1102,12 +1107,24 @@ def generate_restricted_frames():
         ra_z_pts = _ra_zone_cache
 
         # ── Zone Required Gate ──────────────────────────────────────────────
+        ra_detect_boxes = []
         if ra_z_pts is None or len(ra_z_pts) < 3:
             # NO zone = NO detection. Clear results.
             ra_last_results = []
+            _ra_display_tracker.reset()
             if ra_future is not None and not ra_future.done():
                 ra_future.cancel()
         else:
+            # Sync Detection for immediate tracking (no lag)
+            pixel_pts = [(int(p["x"] * fw), int(p["y"] * fh)) for p in ra_z_pts]
+            raw_faces = detect_faces(frame, min_size=25)
+            in_zone_boxes = []
+            for f in raw_faces:
+                if _zm.is_face_inside_zone((f[0], f[1], f[2], f[3]), pixel_pts):
+                    in_zone_boxes.append((f[0], f[1], f[0]+f[2], f[1]+f[3]))
+            
+            ra_detect_boxes = _ra_display_tracker.update(in_zone_boxes)
+
             _ra_skip = (_ra_skip + 1) % _RA_PROCESS_EVERY
             if _ra_skip == 0 and (ra_future is None or ra_future.done()):
                 if ra_future is not None:
@@ -1149,9 +1166,33 @@ def generate_restricted_frames():
             cv2.putText(frame, "Restricted Zone", (cx - 60, cy),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 120, 255), 2)
 
+        # ── Map results to smoothed tracking boxes ──────────────────────────
+        display_results = []
+        for det_box in ra_detect_boxes:
+            best_iou = 0
+            best_res = None
+            for r in ra_last_results:
+                iou = _box_iou(det_box, r["box"])
+                if iou > best_iou:
+                    best_iou = iou
+                    best_res = r
+            
+            if best_iou > 0.30 and best_res:
+                display_results.append({
+                    "box": det_box,
+                    "label": best_res["label"],
+                    "color": best_res["color"]
+                })
+            else:
+                display_results.append({
+                    "box": det_box,
+                    "label": "Analyzing...",
+                    "color": (200, 200, 200)
+                })
+
         # ── Draw detection results on frame ─────────────────────────────────
-        for res in ra_last_results:
-            x1, y1, x2, y2 = res["box"]
+        for res in display_results:
+            x1, y1, x2, y2 = map(int, res["box"])
             color = res["color"]
             label = res["label"]
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
@@ -1183,10 +1224,13 @@ def start_restricted_camera():
     source = data.get("source", "webcam")
 
     if source == "cctv":
+        ra_cctv_url, ra_cctv_err = _build_cctv_url()
+        if ra_cctv_err:
+            return jsonify({"success": False, "message": ra_cctv_err}), 400
         _ra_source_config["type"] = "cctv"
-        _ra_source_config["url"]  = _RA_CCTV_URL
-        ok = ra_camera_manager.open_cctv(_RA_CCTV_URL)
-        print(f"[RA] open_cctv → {ok}  url={_RA_CCTV_URL}")
+        _ra_source_config["url"]  = ra_cctv_url
+        ok = ra_camera_manager.open_cctv(ra_cctv_url)
+        print(f"[RA] open_cctv → {ok}")
     else:
         _ra_source_config["type"] = "webcam"
         _ra_source_config["url"]  = None

@@ -15,6 +15,8 @@ Collections:
 import datetime
 import io
 import csv
+import os
+import glob
 import numpy as np
 import pytz
 from pymongo import MongoClient, DESCENDING
@@ -278,10 +280,10 @@ def get_ra_stats() -> dict:
         "intrusions_today": ra_events.count_documents(
             {"first_seen": {"$gte": today_start}}
         ),
-        "total_alerts": ra_alerts.count_documents({}) if ra_alerts else 0,
+        "total_alerts": ra_alerts.count_documents({}) if ra_alerts is not None else 0,
         "alerts_today": (
             ra_alerts.count_documents({"alert_time": {"$gte": today_start}})
-            if ra_alerts else 0
+            if ra_alerts is not None else 0
         ),
     }
 
@@ -310,3 +312,36 @@ def export_ra_csv() -> str:
 # Legacy alias
 def export_restricted_csv() -> str:
     return export_ra_csv()
+
+
+def delete_all_ra_logs() -> bool:
+    """Delete ALL restricted-area events, alerts, snapshots from DB and disk."""
+    try:
+        deleted = 0
+        if ra_events is not None:
+            deleted += ra_events.delete_many({}).deleted_count
+        if ra_alerts is not None:
+            deleted += ra_alerts.delete_many({}).deleted_count
+        if ra_snapshots is not None:
+            deleted += ra_snapshots.delete_many({}).deleted_count
+
+        # Remove snapshot images from disk
+        _app_dir = os.path.dirname(os.path.abspath(__file__))
+        _static_ra = os.path.join(_app_dir, "..", "..", "app", "static", "restricted_area")
+        _static_ra = os.path.normpath(_static_ra)
+        if os.path.isdir(_static_ra):
+            for sub in ("unknown", "blacklist"):
+                sub_dir = os.path.join(_static_ra, sub)
+                if os.path.isdir(sub_dir):
+                    for f in glob.glob(os.path.join(sub_dir, "*.jpg")):
+                        try:
+                            os.remove(f)
+                        except OSError:
+                            pass
+            print(f"[restricted_area.db] Deleted snapshot files from {_static_ra}")
+
+        print(f"[restricted_area.db] delete_all_ra_logs: removed {deleted} DB docs")
+        return True
+    except Exception as e:
+        print(f"[restricted_area.db] delete_all_ra_logs error: {e}")
+        return False

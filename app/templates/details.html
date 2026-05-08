@@ -1,212 +1,1067 @@
 {% extends "base.html" %}
-{% block title %}Details — CV Platform{% endblock %}
+{% block title %}Model Information Center — CV Platform{% endblock %}
+
+{% block extra_css %}
+<style>
+  /* Clean White + Red Theme */
+  :root {
+    --primary-red: #dc2626;
+    --primary-red-light: #fee2e2;
+    --primary-red-hover: #b91c1c;
+    --surface-white: #ffffff;
+    --bg-light: #f9fafb;
+    --text-main: #1f2937;
+    --text-muted: #6b7280;
+    --border-light: #e5e7eb;
+  }
+
+  body.platform-body {
+    background-color: var(--bg-light);
+    color: var(--text-main);
+  }
+
+  .mic-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 40px 20px;
+  }
+
+  .mic-header {
+    text-align: center;
+    margin-bottom: 40px;
+  }
+
+  .mic-header h1 {
+    font-size: 2.5rem;
+    font-weight: 800;
+    color: var(--text-main);
+    margin-bottom: 12px;
+  }
+
+  .mic-header p {
+    font-size: 1.1rem;
+    color: var(--text-muted);
+    max-width: 600px;
+    margin: 0 auto;
+  }
+
+  /* Tabs */
+  .mic-tabs {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-bottom: 40px;
+    flex-wrap: wrap;
+  }
+
+  .mic-tab {
+    padding: 10px 20px;
+    border-radius: 30px;
+    background: var(--surface-white);
+    border: 1px solid var(--border-light);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .mic-tab:hover {
+    border-color: var(--primary-red);
+    color: var(--primary-red);
+  }
+
+  .mic-tab.active {
+    background: var(--primary-red);
+    color: var(--surface-white);
+    border-color: var(--primary-red);
+  }
+
+  /* Model Card */
+  .mic-card {
+    background: var(--surface-white);
+    border-radius: 16px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.04);
+    border: 1px solid var(--border-light);
+    overflow: hidden;
+    margin-bottom: 40px;
+    display: flex;
+    flex-direction: column;
+    transition: transform 0.3s ease;
+  }
+
+  @media (min-width: 992px) {
+    .mic-card {
+      flex-direction: row;
+    }
+  }
+
+  .mic-card-left {
+    flex: 1;
+    padding: 40px;
+    border-bottom: 1px solid var(--border-light);
+  }
+
+  @media (min-width: 992px) {
+    .mic-card-left {
+      border-bottom: none;
+      border-right: 1px solid var(--border-light);
+    }
+  }
+
+  .mic-card-right {
+    flex: 1;
+    background: var(--bg-light);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+    position: relative;
+  }
+
+  .mic-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+
+  .mic-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    background: var(--primary-red-light);
+    color: var(--primary-red);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .mic-icon svg {
+    width: 24px;
+    height: 24px;
+    stroke: currentColor;
+    stroke-width: 2;
+    fill: none;
+  }
+
+  .mic-card-title {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: var(--text-main);
+    margin: 0;
+  }
+
+  .mic-card-desc {
+    font-size: 1rem;
+    color: var(--text-muted);
+    line-height: 1.6;
+    margin-bottom: 30px;
+  }
+
+  /* Sections inside card */
+  .mic-section {
+    margin-bottom: 24px;
+  }
+
+  .mic-section-title {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 700;
+    color: var(--primary-red);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .mic-pipeline {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    background: var(--bg-light);
+    padding: 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border-light);
+  }
+
+  .mic-pipe-step {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-main);
+    background: var(--surface-white);
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border-light);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+  }
+
+  .mic-pipe-arrow {
+    color: var(--primary-red);
+    font-weight: bold;
+  }
+
+  .mic-grid-2 {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  @media (min-width: 600px) {
+    .mic-grid-2 {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+
+  .mic-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .mic-list li {
+    position: relative;
+    padding-left: 20px;
+    font-size: 0.9rem;
+    color: var(--text-main);
+    margin-bottom: 8px;
+    line-height: 1.4;
+  }
+
+  .mic-list li::before {
+    content: "•";
+    position: absolute;
+    left: 0;
+    color: var(--primary-red);
+    font-weight: bold;
+  }
+
+  .mic-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    background: var(--bg-light);
+    padding: 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border-light);
+  }
+
+  .mic-stat {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .mic-stat-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+
+  .mic-stat-val {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text-main);
+  }
+
+  /* Badges for inputs/outputs */
+  .mic-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .mic-tag {
+    font-size: 0.8rem;
+    background: var(--primary-red-light);
+    color: var(--primary-red-hover);
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-weight: 500;
+  }
+
+  /* Demo box */
+  .mic-demo-box {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background: #0f172a;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.1);
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .mic-demo-placeholder {
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 1rem;
+    font-weight: 500;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .mic-demo-placeholder svg {
+    width: 48px;
+    height: 48px;
+    opacity: 0.5;
+  }
+
+  /* Client Explain Section */
+  .client-explain-section {
+    margin-top: 60px;
+    background: var(--surface-white);
+    border-radius: 16px;
+    padding: 40px;
+    border: 1px solid var(--border-light);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.02);
+  }
+
+  .ce-header {
+    text-align: center;
+    margin-bottom: 30px;
+  }
+
+  .ce-header h2 {
+    font-size: 2rem;
+    color: var(--text-main);
+    margin-bottom: 10px;
+    margin-top: 0;
+  }
+
+  .ce-header p {
+    color: var(--text-muted);
+    margin: 0;
+  }
+
+  .ce-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+
+  @media (min-width: 768px) {
+    .ce-grid {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+
+  .ce-card {
+    background: var(--bg-light);
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    padding: 24px;
+  }
+
+  .ce-card h3 {
+    font-size: 1.25rem;
+    color: var(--primary-red);
+    margin-top: 0;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .ce-row {
+    margin-bottom: 16px;
+  }
+
+  .ce-row:last-child {
+    margin-bottom: 0;
+  }
+
+  .ce-label {
+    font-weight: 700;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+
+  .ce-value {
+    font-size: 0.95rem;
+    color: var(--text-main);
+    line-height: 1.5;
+  }
+</style>
+{% endblock %}
 
 {% block content %}
-<div class="page-wrap p-page-enter">
+<div class="page-wrap p-page-enter mic-container">
 
-  <div style="margin-bottom:36px;">
-    <div class="section-tag">Architecture</div>
-    <h1 class="page-title" style="margin-top:10px;">Platform Details</h1>
-    <p style="font-size:.9rem;color:var(--p-text2);margin-top:6px;max-width:600px;">
-      Module architecture, database structure, technology stack, and system flow for each AI pipeline.
-    </p>
+  <!-- Header -->
+  <div class="mic-header">
+    <h1>Model Information Center</h1>
+    <p>Professional documentation and sales material for computer vision modules.</p>
   </div>
 
-  <!-- ── Row 1: Project Info + Stack ── -->
-  <div class="details-grid">
+  <!-- Tabs -->
+  <div class="mic-tabs" id="micTabs">
+    <div class="mic-tab active" data-filter="all">All Models</div>
+    <div class="mic-tab" data-filter="fr">Face Recognition</div>
+    <div class="mic-tab" data-filter="ra">Restricted Area</div>
+    <div class="mic-tab" data-filter="od">Object Detection</div>
+    <div class="mic-tab" data-filter="vd">Vehicle Detection</div>
+    <div class="mic-tab" data-filter="fm">Future Models</div>
+  </div>
 
-    <div class="info-card">
-      <div class="info-card-hd">
-        <div class="info-card-icon">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+  <!-- Models List -->
+  <div class="mic-models" id="micModels">
+
+    <!-- 1. Face Recognition -->
+    <div class="mic-card" data-model="fr">
+      <div class="mic-card-left">
+        <div class="mic-title-wrap">
+          <div class="mic-icon">
+            <svg viewBox="0 0 24 24">
+              <circle cx="12" cy="8" r="4" />
+              <path d="M3 21v-1a9 9 0 0118 0v1" />
+            </svg>
+          </div>
+          <h2 class="mic-card-title">Face Recognition System</h2>
         </div>
-        <div class="info-card-title">Project Information</div>
-      </div>
-      <div>
-        <div class="info-row"><span class="info-row-k">Platform</span><span class="info-row-v">Computer Vision AI Platform</span></div>
-        <div class="info-row"><span class="info-row-k">Version</span><span class="info-row-v mono">v2.0.0</span></div>
-        <div class="info-row"><span class="info-row-k">Framework</span><span class="info-row-v">Flask (Python)</span></div>
-        <div class="info-row"><span class="info-row-k">Database</span><span class="info-row-v">MongoDB (local)</span></div>
-        <div class="info-row"><span class="info-row-k">Streaming</span><span class="info-row-v">MJPEG / multipart</span></div>
-        <div class="info-row"><span class="info-row-k">Camera</span><span class="info-row-v">Webcam + RTSP CCTV</span></div>
-      </div>
-    </div>
+        <p class="mic-card-desc">Identifies known people and detects unknown persons in live camera streams.</p>
 
-    <div class="info-card">
-      <div class="info-card-hd">
-        <div class="info-card-icon">
-          <svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        <div class="mic-section">
+          <div class="mic-section-title">How It Works</div>
+          <div class="mic-pipeline">
+            <div class="mic-pipe-step">Input Camera Feed</div>
+            <div class="mic-pipe-arrow">↓</div>
+            <div class="mic-pipe-step">Detection</div>
+            <div class="mic-pipe-arrow">↓</div>
+            <div class="mic-pipe-step">Face/Object Extraction</div>
+            <div class="mic-pipe-arrow">↓</div>
+            <div class="mic-pipe-step">Recognition / Classification</div>
+            <div class="mic-pipe-arrow">↓</div>
+            <div class="mic-pipe-step">Store Result</div>
+            <div class="mic-pipe-arrow">↓</div>
+            <div class="mic-pipe-step">Dashboard / Alert</div>
+          </div>
         </div>
-        <div class="info-card-title">Technology Stack</div>
+
+        <div class="mic-grid-2">
+          <div class="mic-section">
+            <div class="mic-section-title">Use Cases</div>
+            <ul class="mic-list">
+              <li>Attendance</li>
+              <li>Office Entry</li>
+              <li>Blacklist Monitoring</li>
+              <li>Visitor Management</li>
+            </ul>
+          </div>
+          <div class="mic-section">
+            <div class="mic-section-title">Features</div>
+            <ul class="mic-list">
+              <li>Real-time detection</li>
+              <li>Unknown face logging</li>
+              <li>Blacklist alert</li>
+              <li>Attendance tracking</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="mic-section">
+          <div class="mic-section-title">Accuracy & Performance</div>
+          <div class="mic-stats-grid">
+            <div class="mic-stat">
+              <span class="mic-stat-label">Detection</span>
+              <span class="mic-stat-val">99.2%</span>
+            </div>
+            <div class="mic-stat">
+              <span class="mic-stat-label">Recognition</span>
+              <span class="mic-stat-val">98.5%</span>
+            </div>
+            <div class="mic-stat">
+              <span class="mic-stat-label">Speed</span>
+              <span class="mic-stat-val">15-30 FPS</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mic-grid-2">
+          <div class="mic-section">
+            <div class="mic-section-title">Input Requirements</div>
+            <div class="mic-tags">
+              <span class="mic-tag">Clear face</span>
+              <span class="mic-tag">Good lighting</span>
+              <span class="mic-tag">Camera angle</span>
+              <span class="mic-tag">Minimum distance</span>
+            </div>
+          </div>
+          <div class="mic-section">
+            <div class="mic-section-title">Outputs</div>
+            <div class="mic-tags">
+              <span class="mic-tag">Name</span>
+              <span class="mic-tag">Confidence</span>
+              <span class="mic-tag">Image</span>
+              <span class="mic-tag">Time</span>
+              <span class="mic-tag">Alert</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mic-section" style="margin-bottom:0;">
+          <div class="mic-section-title">Limitations</div>
+          <ul class="mic-list">
+            <li>Poor lighting</li>
+            <li>Face covered</li>
+            <li>Very far face</li>
+          </ul>
+        </div>
       </div>
-      <div class="tech-grid">
-        <div class="tech-chip"><div class="tech-chip-name">Python 3</div><div class="tech-chip-role">Runtime</div></div>
-        <div class="tech-chip"><div class="tech-chip-name">Flask</div><div class="tech-chip-role">Web server</div></div>
-        <div class="tech-chip"><div class="tech-chip-name">OpenCV</div><div class="tech-chip-role">Vision pipeline</div></div>
-        <div class="tech-chip"><div class="tech-chip-name">YOLOv8</div><div class="tech-chip-role">Object + person</div></div>
-        <div class="tech-chip"><div class="tech-chip-name">face_recognition</div><div class="tech-chip-role">Encoding match</div></div>
-        <div class="tech-chip"><div class="tech-chip-name">MongoDB</div><div class="tech-chip-role">Persistence</div></div>
-        <div class="tech-chip"><div class="tech-chip-name">NumPy</div><div class="tech-chip-role">Array ops</div></div>
-        <div class="tech-chip"><div class="tech-chip-name">Inter (font)</div><div class="tech-chip-role">UI typography</div></div>
+      <div class="mic-card-right">
+        <div class="mic-demo-box"
+          style="background:none;box-shadow:none;display:flex;align-items:center;justify-content:center;height:100%;">
+          <img src="/static/demo-images/FR%20image.png" alt="Face Recognition Demo"
+            style="width:100%;height:auto;max-height:100%;object-fit:contain;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.1);" />
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. Restricted Area -->
+    <div class="mic-card" data-model="ra">
+      <div class="mic-card-left">
+        <div class="mic-title-wrap">
+          <div class="mic-icon">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+          </div>
+          <h2 class="mic-card-title">Restricted Area Monitor</h2>
+        </div>
+        <p class="mic-card-desc">Secures sensitive zones by alerting when unauthorized or unknown individuals enter a
+          designated polygon area.</p>
+
+        <div class="mic-section">
+          <div class="mic-section-title">How It Works</div>
+          <div class="mic-pipeline">
+            <div class="mic-pipe-step">Input Camera Feed</div>
+            <div class="mic-pipe-arrow">↓</div>
+            <div class="mic-pipe-step">Detection</div>
+            <div class="mic-pipe-arrow">↓</div>
+            <div class="mic-pipe-step">Face/Object Extraction</div>
+            <div class="mic-pipe-arrow">↓</div>
+            <div class="mic-pipe-step">Recognition / Classification</div>
+            <div class="mic-pipe-arrow">↓</div>
+            <div class="mic-pipe-step">Store Result</div>
+            <div class="mic-pipe-arrow">↓</div>
+            <div class="mic-pipe-step">Dashboard / Alert</div>
+          </div>
+        </div>
+
+        <div class="mic-grid-2">
+          <div class="mic-section">
+            <div class="mic-section-title">Use Cases</div>
+            <ul class="mic-list">
+              <li>Server Room Security</li>
+              <li>Executive Office Protection</li>
+              <li>Warehouse Restricted Zones</li>
+              <li>After-hours Monitoring</li>
+            </ul>
+          </div>
+          <div class="mic-section">
+            <div class="mic-section-title">Features</div>
+            <ul class="mic-list">
+              <li>Custom polygon zones</li>
+              <li>Instant unauthorized alerts</li>
+              <li>Automatic snapshot capture</li>
+              <li>Integration with alarm systems</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="mic-section">
+          <div class="mic-section-title">Accuracy & Performance</div>
+          <div class="mic-stats-grid">
+            <div class="mic-stat">
+              <span class="mic-stat-label">Intrusion Detect</span>
+              <span class="mic-stat-val">99.5%</span>
+            </div>
+            <div class="mic-stat">
+              <span class="mic-stat-label">False Alarms</span>
+              <span class="mic-stat-val">
+                < 1%</span>
+            </div>
+            <div class="mic-stat">
+              <span class="mic-stat-label">Response</span>
+              <span class="mic-stat-val">
+                < 1 Sec</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mic-grid-2">
+          <div class="mic-section">
+            <div class="mic-section-title">Input Requirements</div>
+            <div class="mic-tags">
+              <span class="mic-tag">Defined Zone</span>
+              <span class="mic-tag">Authorized DB</span>
+              <span class="mic-tag">Clear View</span>
+            </div>
+          </div>
+          <div class="mic-section">
+            <div class="mic-section-title">Outputs</div>
+            <div class="mic-tags">
+              <span class="mic-tag">Visual Alert</span>
+              <span class="mic-tag">Intruder Image</span>
+              <span class="mic-tag">Timestamp Log</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mic-section" style="margin-bottom:0;">
+          <div class="mic-section-title">Limitations</div>
+          <ul class="mic-list">
+            <li>Requires pre-registered authorized users</li>
+            <li>Zone boundaries must be clearly visible</li>
+            <li>Total darkness without IR camera</li>
+          </ul>
+        </div>
+      </div>
+      <div class="mic-card-right">
+        <div class="mic-demo-box"
+          style="background:none;box-shadow:none;display:flex;align-items:center;justify-content:center;height:100%;">
+          <img src="/static/demo-images/RA%20image.png" alt="Restricted Area Demo"
+            style="width:100%;height:auto;max-height:100%;object-fit:contain;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.1);" />
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. Object Detection -->
+    <div class="mic-card" data-model="od">
+      <div class="mic-card-left">
+        <div class="mic-title-wrap">
+          <div class="mic-icon">
+            <svg viewBox="0 0 24 24">
+              <rect x="2" y="3" width="20" height="14" rx="2" />
+              <line x1="8" y1="21" x2="16" y2="21" />
+              <line x1="12" y1="17" x2="12" y2="21" />
+            </svg>
+          </div>
+          <h2 class="mic-card-title">Object Detection Engine</h2>
+        </div>
+        <p class="mic-card-desc">Identifies and tracks multiple common items (like phones, bottles, chairs) in real-time
+          using advanced AI models.</p>
+
+        <div class="mic-section">
+          <div class="mic-section-title">How It Works</div>
+          <div class="mic-pipeline">
+            <div class="mic-pipe-step">Input Camera Feed</div>
+            <div class="mic-pipe-arrow">↓</div>
+            <div class="mic-pipe-step">Detection</div>
+            <div class="mic-pipe-arrow">↓</div>
+            <div class="mic-pipe-step">Face/Object Extraction</div>
+            <div class="mic-pipe-arrow">↓</div>
+            <div class="mic-pipe-step">Recognition / Classification</div>
+            <div class="mic-pipe-arrow">↓</div>
+            <div class="mic-pipe-step">Store Result</div>
+            <div class="mic-pipe-arrow">↓</div>
+            <div class="mic-pipe-step">Dashboard / Alert</div>
+          </div>
+        </div>
+
+        <div class="mic-grid-2">
+          <div class="mic-section">
+            <div class="mic-section-title">Use Cases</div>
+            <ul class="mic-list">
+              <li>Inventory Monitoring</li>
+              <li>Workspace Compliance</li>
+              <li>Hazard Detection</li>
+              <li>Retail Analytics</li>
+            </ul>
+          </div>
+          <div class="mic-section">
+            <div class="mic-section-title">Features</div>
+            <ul class="mic-list">
+              <li>Multi-object tracking</li>
+              <li>High-speed inference</li>
+              <li>Confidence scoring</li>
+              <li>Customizable classes</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="mic-section">
+          <div class="mic-section-title">Accuracy & Performance</div>
+          <div class="mic-stats-grid">
+            <div class="mic-stat">
+              <span class="mic-stat-label">mAP Score</span>
+              <span class="mic-stat-val">~85%</span>
+            </div>
+            <div class="mic-stat">
+              <span class="mic-stat-label">Objects/Frame</span>
+              <span class="mic-stat-val">Up to 100</span>
+            </div>
+            <div class="mic-stat">
+              <span class="mic-stat-label">Speed</span>
+              <span class="mic-stat-val">30+ FPS</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mic-grid-2">
+          <div class="mic-section">
+            <div class="mic-section-title">Input Requirements</div>
+            <div class="mic-tags">
+              <span class="mic-tag">Standard Camera</span>
+              <span class="mic-tag">Target Classes</span>
+            </div>
+          </div>
+          <div class="mic-section">
+            <div class="mic-section-title">Outputs</div>
+            <div class="mic-tags">
+              <span class="mic-tag">Object Label</span>
+              <span class="mic-tag">Bounding Box</span>
+              <span class="mic-tag">Count</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mic-section" style="margin-bottom:0;">
+          <div class="mic-section-title">Limitations</div>
+          <ul class="mic-list">
+            <li>Heavy occlusion hides objects</li>
+            <li>Extreme scale variation</li>
+            <li>Limited to trained classes only</li>
+          </ul>
+        </div>
+      </div>
+      <div class="mic-card-right">
+        <div class="mic-demo-box"
+          style="background:none;box-shadow:none;display:flex;align-items:center;justify-content:center;height:100%;">
+          <img src="/static/demo-images/Object%20detection%20image.png" alt="Object Detection Demo"
+            style="width:100%;height:auto;max-height:100%;object-fit:contain;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.1);" />
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. Vehicle Detection -->
+    <div class="mic-card" data-model="vd">
+      <div class="mic-card-left">
+        <div class="mic-title-wrap">
+          <div class="mic-icon">
+            <svg viewBox="0 0 24 24">
+              <rect x="1" y="3" width="22" height="18" rx="2" ry="2" />
+              <line x1="1" y1="9" x2="23" y2="9" />
+              <line x1="9" y1="21" x2="9" y2="9" />
+            </svg>
+          </div>
+          <h2 class="mic-card-title">Vehicle & Plate Recognition</h2>
+        </div>
+        <p class="mic-card-desc">Detects vehicles and reads license plates automatically for access control and traffic
+          monitoring.</p>
+
+        <div class="mic-section">
+          <div class="mic-section-title">How It Works</div>
+          <div class="mic-pipeline">
+            <div class="mic-pipe-step">Input Camera Feed</div>
+            <div class="mic-pipe-arrow">↓</div>
+            <div class="mic-pipe-step">Detection</div>
+            <div class="mic-pipe-arrow">↓</div>
+            <div class="mic-pipe-step">Face/Object Extraction</div>
+            <div class="mic-pipe-arrow">↓</div>
+            <div class="mic-pipe-step">Recognition / Classification</div>
+            <div class="mic-pipe-arrow">↓</div>
+            <div class="mic-pipe-step">Store Result</div>
+            <div class="mic-pipe-arrow">↓</div>
+            <div class="mic-pipe-step">Dashboard / Alert</div>
+          </div>
+        </div>
+
+        <div class="mic-grid-2">
+          <div class="mic-section">
+            <div class="mic-section-title">Use Cases</div>
+            <ul class="mic-list">
+              <li>Smart Parking Lots</li>
+              <li>Toll Booth Automation</li>
+              <li>Residential Gate Access</li>
+              <li>Stolen Vehicle Alerts</li>
+            </ul>
+          </div>
+          <div class="mic-section">
+            <div class="mic-section-title">Features</div>
+            <ul class="mic-list">
+              <li>High-speed OCR</li>
+              <li>Vehicle counting</li>
+              <li>Integration with boom barriers</li>
+              <li>Historical tracking</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="mic-section">
+          <div class="mic-section-title">Accuracy & Performance</div>
+          <div class="mic-stats-grid">
+            <div class="mic-stat">
+              <span class="mic-stat-label">Vehicle Detect</span>
+              <span class="mic-stat-val">99%</span>
+            </div>
+            <div class="mic-stat">
+              <span class="mic-stat-label">OCR Read</span>
+              <span class="mic-stat-val">95%+</span>
+            </div>
+            <div class="mic-stat">
+              <span class="mic-stat-label">Speed</span>
+              <span class="mic-stat-val">10-20 FPS</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mic-grid-2">
+          <div class="mic-section">
+            <div class="mic-section-title">Input Requirements</div>
+            <div class="mic-tags">
+              <span class="mic-tag">Clear Plate View</span>
+              <span class="mic-tag">Stable Angle</span>
+              <span class="mic-tag">Adequate Lighting</span>
+            </div>
+          </div>
+          <div class="mic-section">
+            <div class="mic-section-title">Outputs</div>
+            <div class="mic-tags">
+              <span class="mic-tag">Plate Text</span>
+              <span class="mic-tag">Vehicle Image</span>
+              <span class="mic-tag">Gate Signal</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mic-section" style="margin-bottom:0;">
+          <div class="mic-section-title">Limitations</div>
+          <ul class="mic-list">
+            <li>Muddy or damaged plates</li>
+            <li>Extreme motion blur</li>
+            <li>Severe weather conditions</li>
+          </ul>
+        </div>
+      </div>
+      <div class="mic-card-right">
+        <div class="mic-demo-box"
+          style="background:none;box-shadow:none;display:flex;align-items:center;justify-content:center;height:100%;">
+          <img src="/static/demo-images/vehichal%20detection%20image.png" alt="Vehicle Detection Demo"
+            style="width:100%;height:auto;max-height:100%;object-fit:contain;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.1);" />
+        </div>
+      </div>
+    </div>
+
+    <!-- 5. Future Models -->
+    <div class="mic-card" data-model="fm">
+      <div class="mic-card-left">
+        <div class="mic-title-wrap">
+          <div class="mic-icon" style="background:#f3f4f6;color:#9ca3af;">
+            <svg viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+          </div>
+          <h2 class="mic-card-title" style="color:var(--text-muted);">Future Models</h2>
+        </div>
+        <p class="mic-card-desc">Coming soon to the platform. We are continuously researching and adding new
+          capabilities.</p>
+
+        <div class="mic-grid-2">
+          <div class="mic-section">
+            <div class="mic-section-title">Planned Pipeline</div>
+            <ul class="mic-list">
+              <li>Action Recognition</li>
+              <li>Crowd Density Estimation</li>
+              <li>PPE / Safety Gear Compliance</li>
+              <li>Fire & Smoke Detection</li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+      <div class="mic-card-right" style="background:#f9fafb;">
+        <div class="mic-demo-box" style="background:#e5e7eb;box-shadow:none;">
+          <div class="mic-demo-placeholder" style="color:#9ca3af;">
+            <svg viewBox="0 0 24 24" style="opacity:0.3;">
+              <circle cx="12" cy="12" r="10" />
+            </svg>
+            <span>In Development</span>
+          </div>
+        </div>
       </div>
     </div>
 
   </div>
 
-  <!-- ── Module Detail Cards ── -->
-  <div style="margin-bottom:14px;margin-top:8px;">
-    <div class="section-tag" style="margin-bottom:4px;">Module Details</div>
-  </div>
+  <!-- Client Explain Section -->
+  <div class="client-explain-section">
+    <div class="ce-header">
+      <h2>Explaination</h2>
+      <p>Simple business-friendly talking points for sales and demo presentations.</p>
+    </div>
 
-  <!-- Face Recognition -->
-  <div class="info-card full" style="margin-bottom:20px;">
-    <div class="info-card-hd" style="border-bottom-color:rgba(220,38,38,.12);">
-      <div class="info-card-icon" style="background:rgba(220,38,38,.08);border-color:rgba(220,38,38,.2);">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M3 21v-1a9 9 0 0118 0v1"/></svg>
+    <div class="ce-grid">
+      <!-- FR -->
+      <div class="ce-card" data-explain="fr">
+        <h3>Face Recognition</h3>
+        <div class="ce-row">
+          <div class="ce-label">What it does</div>
+          <div class="ce-value">It works like a digital receptionist, instantly recognizing registered employees and
+            flagging strangers.</div>
+        </div>
+        <div class="ce-row">
+          <div class="ce-label">Why use it</div>
+          <div class="ce-value">To replace physical ID cards, speed up entry, and automate attendance without manual
+            work.</div>
+        </div>
+        <div class="ce-row">
+          <div class="ce-label">Where it can be used</div>
+          <div class="ce-value">Office lobbies, factory entrances, schools, and secure facilities.</div>
+        </div>
+        <div class="ce-row">
+          <div class="ce-label">What client needs</div>
+          <div class="ce-value">Standard IP camera at eye level, a server or edge PC, and 3-5 photos of each employee to
+            register them.</div>
+        </div>
+        <div class="ce-row">
+          <div class="ce-label">Expected output</div>
+          <div class="ce-value">An automated daily attendance sheet and real-time dashboard showing who is inside.</div>
+        </div>
       </div>
-      <div>
-        <div class="info-card-title">Face Recognition</div>
-        <p style="font-size:.78rem;color:var(--p-text3);margin-top:2px;">Identity detection and matching pipeline</p>
-      </div>
-      <span style="margin-left:auto;" class="module-tag module-tag--active">Active</span>
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 32px;">
-      <div>
-        <p style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--p-text3);margin:14px 0 8px;">How it works</p>
-        <p style="font-size:.82rem;color:var(--p-text2);line-height:1.65;">Each video frame is scaled and run through an SSD face detector. Detected face regions are passed to dlib to extract 128-dimensional feature vectors. These are compared against stored encodings using Euclidean distance (threshold 0.5). Identities are classified as <em>known</em>, <em>blacklist</em>, or <em>unknown</em>.</p>
-      </div>
-      <div>
-        <p style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--p-text3);margin:14px 0 8px;">Model Details</p>
-        <div class="info-row"><span class="info-row-k">Detector</span><span class="info-row-v">OpenCV DNN (SSD)</span></div>
-        <div class="info-row"><span class="info-row-k">Encoder</span><span class="info-row-v">128-d face_recognition vectors</span></div>
-        <div class="info-row"><span class="info-row-k">Zone</span><span class="info-row-v mono">MongoDB — polygon points</span></div>
-        <div class="info-row"><span class="info-row-k">FPS</span><span class="info-row-v">~15 (every 2nd frame)</span></div>
-      </div>
-      <div>
-        <p style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--p-text3);margin:14px 0 8px;">Inputs &amp; Outputs</p>
-        <div class="info-row"><span class="info-row-k">Input</span><span class="info-row-v">Webcam / RTSP stream</span></div>
-        <div class="info-row"><span class="info-row-k">Output</span><span class="info-row-v">Annotated MJPEG + labels</span></div>
-        <div class="info-row"><span class="info-row-k">Limitations</span><span class="info-row-v">Requires frontal face, good lighting</span></div>
-      </div>
-    </div>
-  </div>
 
-  <!-- Restricted Area -->
-  <div class="info-card full" style="margin-bottom:20px;">
-    <div class="info-card-hd" style="border-bottom-color:rgba(220,38,38,.12);">
-      <div class="info-card-icon" style="background:rgba(220,38,38,.08);border-color:rgba(220,38,38,.2);">
-        <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      <!-- RA -->
+      <div class="ce-card" data-explain="ra">
+        <h3>Restricted Area</h3>
+        <div class="ce-row">
+          <div class="ce-label">What it does</div>
+          <div class="ce-value">It draws an invisible digital wall around sensitive areas and triggers an alarm if a
+            non-approved person crosses it.</div>
+        </div>
+        <div class="ce-row">
+          <div class="ce-label">Why use it</div>
+          <div class="ce-value">To prevent data theft, physical sabotage, or accidents in hazardous zones automatically
+            24/7.</div>
+        </div>
+        <div class="ce-row">
+          <div class="ce-label">Where it can be used</div>
+          <div class="ce-value">Server rooms, cash counting areas, chemical labs, and CEO offices.</div>
+        </div>
+        <div class="ce-row">
+          <div class="ce-label">What client needs</div>
+          <div class="ce-value">CCTV camera covering the zone, a list of authorized staff photos, and network access for
+            alerts.</div>
+        </div>
+        <div class="ce-row">
+          <div class="ce-label">Expected output</div>
+          <div class="ce-value">Immediate email/SMS alert with a snapshot of the intruder crossing the line.</div>
+        </div>
       </div>
-      <div>
-        <div class="info-card-title">Restricted Area Monitoring</div>
-        <p style="font-size:.78rem;color:var(--p-text3);margin-top:2px;">Zone-based intrusion detection with ArcFace recognition</p>
-      </div>
-      <span style="margin-left:auto;" class="module-tag module-tag--active">Active</span>
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 32px;">
-      <div>
-        <p style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--p-text3);margin:14px 0 8px;">How it works</p>
-        <p style="font-size:.82rem;color:var(--p-text2);line-height:1.65;">YUNet detects faces; ArcFace extracts 512-d embeddings compared to a registered persons database. Every 3rd frame is processed with a 10-second cooldown per track. Unknown faces inside the polygon zone trigger an alert with a cropped snapshot saved to <code>static/alerts/</code> and logged to MongoDB.</p>
-      </div>
-      <div>
-        <p style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--p-text3);margin:14px 0 8px;">Model Details</p>
-        <div class="info-row"><span class="info-row-k">Person detect</span><span class="info-row-v">YOLOv8 nano</span></div>
-        <div class="info-row"><span class="info-row-k">Face detect</span><span class="info-row-v">YuNet (OpenCV)</span></div>
-        <div class="info-row"><span class="info-row-k">Encoding match</span><span class="info-row-v">ArcFace — threshold 0.45</span></div>
-        <div class="info-row"><span class="info-row-k">FPS</span><span class="info-row-v">~10 (every 3rd frame)</span></div>
-      </div>
-      <div>
-        <p style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--p-text3);margin:14px 0 8px;">Inputs &amp; Outputs</p>
-        <div class="info-row"><span class="info-row-k">Input</span><span class="info-row-v">Webcam / RTSP stream</span></div>
-        <div class="info-row"><span class="info-row-k">Alerts</span><span class="info-row-v mono">restricted_area_db.alerts</span></div>
-        <div class="info-row"><span class="info-row-k">Snapshots</span><span class="info-row-v mono">static/alerts/*.jpg</span></div>
-      </div>
-    </div>
-  </div>
 
-  <!-- Object Detection -->
-  <div class="info-card full" style="margin-bottom:20px;">
-    <div class="info-card-hd" style="border-bottom-color:rgba(234,88,12,.12);">
-      <div class="info-card-icon" style="background:rgba(234,88,12,.08);border-color:rgba(234,88,12,.2);">
-        <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      <!-- OD -->
+      <div class="ce-card" data-explain="od">
+        <h3>Object Detection</h3>
+        <div class="ce-row">
+          <div class="ce-label">What it does</div>
+          <div class="ce-value">It acts as a tireless set of eyes, counting specific items and spotting anomalies like
+            misplaced boxes.</div>
+        </div>
+        <div class="ce-row">
+          <div class="ce-label">Why use it</div>
+          <div class="ce-value">To automate inventory checks or ensure work areas remain clean and hazard-free.</div>
+        </div>
+        <div class="ce-row">
+          <div class="ce-label">Where it can be used</div>
+          <div class="ce-value">Warehouses, assembly lines, retail store aisles, and loading docks.</div>
+        </div>
+        <div class="ce-row">
+          <div class="ce-label">What client needs</div>
+          <div class="ce-value">Standard CCTV camera and a list of specific objects they want to track (e.g., boxes,
+            pallets, helmets).</div>
+        </div>
+        <div class="ce-row">
+          <div class="ce-label">Expected output</div>
+          <div class="ce-value">Live counts on a dashboard and logs of missing or unexpected items.</div>
+        </div>
       </div>
-      <div>
-        <div class="info-card-title">Object Detection</div>
-        <p style="font-size:.78rem;color:var(--p-text3);margin-top:2px;">YOLOv8 real-time object classification</p>
-      </div>
-      <span style="margin-left:auto;" class="module-tag module-tag--active">Active</span>
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 32px;">
-      <div>
-        <p style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--p-text3);margin:14px 0 8px;">How it works</p>
-        <p style="font-size:.82rem;color:var(--p-text2);line-height:1.65;">Every 2nd frame is passed to YOLOv8n/s. Detections are filtered to four target classes. Bounding boxes with class labels and confidence percentages are drawn and streamed as MJPEG. No zone or database dependency — fully stateless.</p>
-      </div>
-      <div>
-        <p style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--p-text3);margin:14px 0 8px;">Model Details</p>
-        <div class="info-row"><span class="info-row-k">Architecture</span><span class="info-row-v">YOLOv8</span></div>
-        <div class="info-row"><span class="info-row-k">Classes</span><span class="info-row-v">bottle · chair · watch · phone</span></div>
-        <div class="info-row"><span class="info-row-k">Output</span><span class="info-row-v">Bounding boxes + confidence</span></div>
-        <div class="info-row"><span class="info-row-k">FPS</span><span class="info-row-v">~15–20 (every 2nd frame)</span></div>
-      </div>
-      <div>
-        <p style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--p-text3);margin:14px 0 8px;">Usage</p>
-        <div class="info-row"><span class="info-row-k">Input</span><span class="info-row-v">Webcam / RTSP stream</span></div>
-        <div class="info-row"><span class="info-row-k">Limitations</span><span class="info-row-v">4 classes only, no persistence</span></div>
-        <div class="info-row"><span class="info-row-k">Status</span><span class="info-row-v" style="color:var(--p-success);">Online</span></div>
-      </div>
-    </div>
-  </div>
 
-  <!-- ── Row: Database Structure ── -->
-  <div class="info-card full" style="margin-bottom:20px;">
-    <div class="info-card-hd">
-      <div class="info-card-icon">
-        <svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+      <!-- VD -->
+      <div class="ce-card" data-explain="vd">
+        <h3>Vehicle Detection</h3>
+        <div class="ce-row">
+          <div class="ce-label">What it does</div>
+          <div class="ce-value">It automatically reads license plates to open gates for approved cars without needing a
+            guard.</div>
+        </div>
+        <div class="ce-row">
+          <div class="ce-label">Why use it</div>
+          <div class="ce-value">To eliminate traffic jams at gates, cut security guard costs, and track exact entry/exit
+            times.</div>
+        </div>
+        <div class="ce-row">
+          <div class="ce-label">Where it can be used</div>
+          <div class="ce-value">Corporate parking lots, residential society gates, logistics hubs, and toll plazas.
+          </div>
+        </div>
+        <div class="ce-row">
+          <div class="ce-label">What client needs</div>
+          <div class="ce-value">A specialized LPR camera aimed at the lane, decent lighting (or IR), and a database of
+            allowed plates.</div>
+        </div>
+        <div class="ce-row">
+          <div class="ce-label">Expected output</div>
+          <div class="ce-value">Automatic gate opening signal and a digital log of every car that entered.</div>
+        </div>
       </div>
-      <div class="info-card-title">Database Structure (MongoDB)</div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;">
-      <div>
-        <div style="font-size:.72rem;text-transform:uppercase;letter-spacing:.12em;color:var(--p-text3);margin-bottom:8px;">computer_vision_db</div>
-        <div class="info-row"><span class="info-row-k">zones</span><span class="info-row-v" style="font-size:.78rem;">Active monitoring zone {x,y,w,h}</span></div>
-      </div>
-      <div>
-        <div style="font-size:.72rem;text-transform:uppercase;letter-spacing:.12em;color:var(--p-text3);margin-bottom:8px;">restricted_area_db</div>
-        <div class="info-row"><span class="info-row-k">known_persons</span><span class="info-row-v" style="font-size:.78rem;">Name + 128-d encodings</span></div>
-        <div class="info-row" style="border-bottom:none;"><span class="info-row-k">alerts</span><span class="info-row-v" style="font-size:.78rem;">Timestamp + status + image_path</span></div>
-      </div>
-      <div>
-        <div style="font-size:.72rem;text-transform:uppercase;letter-spacing:.12em;color:var(--p-text3);margin-bottom:8px;">File storage</div>
-        <div class="info-row"><span class="info-row-k">static/alerts/</span><span class="info-row-v" style="font-size:.78rem;">Intruder crop snapshots (JPEG)</span></div>
-        <div class="info-row" style="border-bottom:none;"><span class="info-row-k">temp_uploads/</span><span class="info-row-v" style="font-size:.78rem;">Vehicle videos (auto-deleted 30s)</span></div>
-      </div>
-    </div>
-  </div>
 
-  <!-- ── System Flow ── -->
-  <div class="info-card full">
-    <div class="info-card-hd">
-      <div class="info-card-icon">
-        <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-      </div>
-      <div class="info-card-title">System Flow — Restricted Area Pipeline</div>
-    </div>
-    <div class="flow-row">
-      <div class="flow-step">Camera Frame</div>
-      <div class="flow-arrow">→</div>
-      <div class="flow-step">YOLO Person Detect</div>
-      <div class="flow-arrow">→</div>
-      <div class="flow-step">Multi-Object Tracker</div>
-      <div class="flow-arrow">→</div>
-      <div class="flow-step">Face Encoding Extract</div>
-      <div class="flow-arrow">→</div>
-      <div class="flow-step">Match Known Persons</div>
-      <div class="flow-arrow">→</div>
-      <div class="flow-step">Alert + Snapshot</div>
-      <div class="flow-arrow">→</div>
-      <div class="flow-step">MongoDB Log</div>
     </div>
   </div>
 
 </div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const tabs = document.querySelectorAll('.mic-tab');
+    const cards = document.querySelectorAll('.mic-card');
+    const explainCards = document.querySelectorAll('.ce-card');
+
+    tabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        // Remove active class
+        tabs.forEach(t => t.classList.remove('active'));
+        // Add active to clicked
+        tab.classList.add('active');
+
+        const filter = tab.getAttribute('data-filter');
+
+        // Filter main cards
+        cards.forEach(card => {
+          if (filter === 'all' || card.getAttribute('data-model') === filter) {
+            card.style.display = 'flex';
+          } else {
+            card.style.display = 'none';
+          }
+        });
+
+        // Filter explain cards
+        explainCards.forEach(ec => {
+          if (filter === 'all' || ec.getAttribute('data-explain') === filter) {
+            ec.style.display = 'block';
+          } else {
+            ec.style.display = 'none';
+          }
+        });
+
+        // Hide the explain section title if only Future Models is selected
+        const ceSection = document.querySelector('.client-explain-section');
+        if (filter === 'fm') {
+          ceSection.style.display = 'none';
+        } else {
+          ceSection.style.display = 'block';
+        }
+      });
+    });
+  });
+</script>
 {% endblock %}

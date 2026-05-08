@@ -45,8 +45,8 @@ for _d in [_RA_SNAP_ROOT, _RA_SNAP_UNKNOWN, _RA_SNAP_BL]:
     os.makedirs(_d, exist_ok=True)
 
 # ── Quality gate parameters (aligned with FR app-level gates) ────────────────
-_MIN_CONF        = 0.20   # SCRFD detection confidence (matches FR app gate)
-_MIN_FACE_SIZE   = 20     # px (matches FR app gate — supports far/small CCTV faces)
+_MIN_CONF        = 0.45   # SCRFD detection confidence (increased to remove false positives)
+_MIN_FACE_SIZE   = 25     # px (matches FR app gate — supports far/small CCTV faces)
 _MIN_SHARPNESS   = 8.0    # Laplacian variance (matches FR app gate)
 
 # ── Recognition thresholds (cosine distance, aligned with FR thresholds) ──────
